@@ -6,20 +6,18 @@ A Python-based application that enables conversations between multiple AI models
 
 - Multi-model AI conversations with support for:
   - Claude (Anthropic)
-  - DeepSeek (DeepSeek AI)
+  - DeepSeek R1 (DeepSeek AI)
   - OpenRouter Models:
-    - GPT-4 (OpenAI)
-    - Grok (xAI)
+    - Gemini (Google)
     - Qwen (Alibaba)
-    - LLaMA
+    - LLaMA (Meta)
   - Flux (Black Forest Labs) for image generation
 - Chain of Thought reasoning display for DeepSeek models
 - Customizable conversation turns and modes (AI-AI or Human-AI)
 - Multiple preset system prompt pairs
 - Image generation and analysis capabilities
 - Export functionality for conversations and generated images
-- Modern cyberpunk-themed GUI interface
-- Conversation memory system
+
 
 ## Prerequisites
 
@@ -34,7 +32,7 @@ You'll need API keys from the following services to use all features:
 1. Anthropic (Claude):
    - Sign up at: https://console.anthropic.com/
    - Endpoint: https://api.anthropic.com/v1/messages
-   - Models: claude-3-opus, claude-3-sonnet, claude-3-haiku
+   - Models: claude-3-opus, claude-3.5-sonnet, claude-3.5-haiku
 
 2. OpenRouter:
    - Sign up at: https://openrouter.ai/
@@ -44,6 +42,10 @@ You'll need API keys from the following services to use all features:
 3. Replicate (for Flux):
    - Sign up at: https://replicate.com/
    - Used for image generation with Flux model
+
+4. DeepSeek
+   - current endpoint is at deepseek.com
+   - now offered by others such as OpenRouter but it's not set up for this yet
 
 ## Installation
 
