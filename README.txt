@@ -1,6 +1,6 @@
 # Neural Link Interface
 
-A Python-based application that enables conversations between multiple AI models in a graphical user interface. The system supports various AI models including Claude, DeepSeek, OpenRouter models (GPT-4, Grok, Qwen), and Flux, allowing them to interact with each other through text and image generation.
+A variation on Andy Ayrey's Infinite Backrooms that enables conversations between multiple AI models in a graphical user interface. The system supports various AI models including the Claudes, DeepSeek R1, OpenAI models, Gemini, Flux Pro and others, allowing them to interact with each other through text and image generation.
 
 ## Features
 
@@ -11,7 +11,7 @@ A Python-based application that enables conversations between multiple AI models
     - Gemini (Google)
     - Qwen (Alibaba)
     - LLaMA (Meta)
-  - Flux (Black Forest Labs) for image generation
+  - Flux Pro (Black Forest Labs) for image generation
 - Chain of Thought reasoning display for DeepSeek models
 - Customizable conversation turns and modes (AI-AI or Human-AI)
 - Multiple preset system prompt pairs
@@ -37,7 +37,7 @@ You'll need API keys from the following services to use all features:
 2. OpenRouter:
    - Sign up at: https://openrouter.ai/
    - Endpoint: https://openrouter.ai/api/v1/chat/completions
-   - Provides access to: GPT-4, Grok, Qwen, LLaMA, DeepSeek, and more
+   - Provides access to: Gemini, Grok, Qwen, LLaMA, and more
 
 3. Replicate (for Flux):
    - Sign up at: https://replicate.com/
@@ -46,6 +46,8 @@ You'll need API keys from the following services to use all features:
 4. DeepSeek
    - current endpoint is at deepseek.com
    - now offered by others such as OpenRouter but it's not set up for this yet
+
+5. OpenAI
 
 ## Installation
 
@@ -105,8 +107,8 @@ poetry run python main.py
    - Mode Selection: Choose between AI-AI conversation or Human-AI interaction
    - Iterations: Set number of conversation turns (2-10)
    - AI Model Selection: Choose models for AI-1 and AI-2
-   - Prompt Style: Select from predefined conversation styles
-   - Input Field: Enter your message or initial prompt
+   - Scenario: Select from predefined system prompt pairs
+   - Input Field: Enter initial prompt or inspiration
    - Export: Save conversation and generated images
 
 3. Special Features:
