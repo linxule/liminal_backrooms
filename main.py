@@ -6,7 +6,9 @@ import json
 from config import (
     TURN_DELAY,
     AI_MODELS,
-    SYSTEM_PROMPT_PAIRS
+    SYSTEM_PROMPT_PAIRS,
+    SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT,
+    SHARE_CHAIN_OF_THOUGHT
 )
 from shared_utils import (
     call_claude_api,
@@ -79,6 +81,7 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None):
     # Add all messages except the last one (which will be the prompt)
     for msg in conversation[:-1]:
         if not isinstance(msg, dict):
+            print(f"\nProcessing message: {str(msg)[:100]}...")
             full_context.append({
                 "role": "user",
                 "content": str(msg)
@@ -87,14 +90,17 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None):
             
         # For both AIs: their own messages are assistant, other AI's messages are user
         if msg.get("model") == model:
+            print(f"\nProcessing {model} message: {msg.get('content', '')[:100]}...")
             full_context.append({
                 "role": "assistant",
-                "content": msg.get("display", msg.get("content", ""))
+                "content": msg.get("display", msg.get("content", "")) if SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT else msg.get("content", "")
             })
         else:
+            other_model = msg.get("model", "unknown model")
+            print(f"\nProcessing {other_model} message: {msg.get('content', '')[:100]}...")
             full_context.append({
                 "role": "user",
-                "content": msg.get("content", "")
+                "content": msg.get("display", msg.get("content", "")) if SHARE_CHAIN_OF_THOUGHT else msg.get("content", "")
             })
 
     # Print the processed conversation history for debugging
@@ -106,29 +112,42 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None):
     model_id = AI_MODELS.get(model, model)
     
     # Make API calls based on model type
-    if "claude" in model_id.lower():
-        print("\n--- Prompt to Claude ---")
-        print("System prompt:", system_prompt)
-        print("Current user prompt:", prompt)
-        print("Full context messages:")
-        for msg in full_context:
-            print("•", msg.get("role"), "|", msg.get("content", ""))
-        print("------------------------")
-        response = call_claude_api(prompt, full_context, model_id, system_prompt)
-    elif "flux" in model_id.lower():
-        response = call_replicate_api(prompt, [], model_id, gui)
-    elif "gemini" in model_id.lower():
-        response = call_openrouter_api(prompt, full_context, model_id, system_prompt)
-    elif "o1" in model_id.lower():
-        response = call_openai_api(prompt, full_context, model_id, system_prompt)
-    elif "grok" in model_id.lower():
-        response = call_openrouter_api(prompt, full_context, model_id, system_prompt)
-    elif "qwen" in model_id.lower():
-        response = call_openrouter_api(prompt, full_context, model_id, system_prompt)
-    elif "deepseek" in model_id.lower():
-        response = call_deepseek_api(prompt, full_context, model_id, system_prompt)
-    elif "llama" in model_id.lower():
-        response = call_openrouter_api(prompt, full_context, model_id, system_prompt)
+    try:
+        if "claude" in model_id.lower():
+            print(f"\n--- Prompt to {model} (Claude) ---")
+            print("System prompt:", system_prompt)
+            print("Current user prompt:", prompt)
+            print("Full context messages:")
+            for msg in full_context:
+                print("•", msg.get("role"), "|", msg.get("content", ""))
+            print("------------------------")
+            response = call_claude_api(prompt, full_context, model_id, system_prompt)
+        elif "flux" in model_id.lower():
+            print(f"\n--- Prompt to {model} (Flux) ---")
+            response = call_replicate_api(prompt, [], model_id, gui)
+        elif "gemini" in model_id.lower():
+            print(f"\n--- Prompt to {model} (Gemini) ---")
+            response = call_openrouter_api(prompt, full_context, model_id, system_prompt)
+        elif "o1" in model_id.lower():
+            print(f"\n--- Prompt to {model} (OpenAI) ---")
+            response = call_openai_api(prompt, full_context, model_id, system_prompt)
+        elif "grok" in model_id.lower():
+            print(f"\n--- Prompt to {model} (Grok) ---")
+            response = call_openrouter_api(prompt, full_context, model_id, system_prompt)
+        elif "qwen" in model_id.lower():
+            print(f"\n--- Prompt to {model} (Qwen) ---")
+            response = call_openrouter_api(prompt, full_context, model_id, system_prompt)
+        elif "deepseek" in model_id.lower():
+            print(f"\n--- Prompt to {model} (DeepSeek) ---")
+            response = call_deepseek_api(prompt, full_context, model_id, system_prompt)
+        elif "llama" in model_id.lower():
+            print(f"\n--- Prompt to {model} (LLaMA) ---")
+            response = call_openrouter_api(prompt, full_context, model_id, system_prompt)
+    except Exception as e:
+        error_msg = f"\nError calling {model}: {str(e)}\nError type: {type(e)}"
+        print(error_msg)
+        gui.append_text(f"\n{ai_name} ({model}): Failed to respond - {str(e)}\n")
+        return conversation
     
     # Handle the response
     if response:
@@ -184,7 +203,8 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None):
                 }, indent=2)
             })
     else:
-        print(f"\n{model} failed to respond")
+        error_msg = f"\n{model} failed to respond - no response received"
+        print(error_msg)
         gui.append_text(f"\n{ai_name} ({model}): Failed to respond\n")
     
     print(f"Conversation length after {model} turn: {len(conversation)}")

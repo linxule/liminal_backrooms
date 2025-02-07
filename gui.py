@@ -193,7 +193,7 @@ class AIGUI:
         self.turns_dropdown = ttk.Combobox(
             turns_frame,
             textvariable=self.turns_var,
-            values=["2", "4", "6", "8", "10"],
+            values=["2", "4", "6", "8", "100"],
             width=5,
             state="readonly"
         )

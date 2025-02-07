@@ -213,7 +213,7 @@ def call_openai_api(prompt, conversation_history, model, system_prompt):
     except Exception as e:
         print(f"Error calling OpenAI API: {e}")
         return None
-    
+
 def call_openrouter_api(prompt, conversation_history, model, system_prompt):
     """Call the OpenRouter API to access various LLM models."""
     try:
@@ -228,37 +228,15 @@ def call_openrouter_api(prompt, conversation_history, model, system_prompt):
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        
-        # Special handling for DeepSeek models - ensure proper message interleaving
-        if "deepseek" in model.lower():
-            last_role = None
-            for msg in conversation_history:
-                if isinstance(msg, dict):
-                    role = msg.get("role", "user")
-                    content = msg.get("content", "")
-                    
-                    # Skip if same role as last message
-                    if role == last_role:
-                        continue
-                        
-                    if isinstance(content, str):
-                        messages.append({
-                            "role": role,
-                            "content": content
-                        })
-                        last_role = role
             
-            # Only add the current prompt if it's not already the last message
-            if not messages or messages[-1].get("content") != prompt:
-                messages.append({"role": "user", "content": prompt})
-        else:
-            # Standard message formatting for other models
-            for msg in conversation_history:
-                if msg["role"] != "system":  # Skip system prompts
-                    messages.append({
-                        "role": msg["role"],
-                        "content": msg["content"]
-                    })
+        for msg in conversation_history:
+            if msg["role"] != "system":  # Skip system prompts
+                messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"]
+                })
+        
+        messages.append({"role": "user", "content": prompt})
         
         payload = {
             "model": model,  # Using the exact model name from config
@@ -267,18 +245,6 @@ def call_openrouter_api(prompt, conversation_history, model, system_prompt):
             "max_tokens": 4000,
             "stream": False
         }
-        
-        # Add reasoning parameter for DeepSeek models
-        if "deepseek" in model.lower():
-            payload.update({
-                "tools": [{
-                    "type": "reasoning",
-                    "function": {
-                        "name": "reasoning",
-                        "description": "Reason about the response step by step"
-                    }
-                }]
-            })
         
         print(f"\nSending to OpenRouter:")
         print(f"Model: {model}")
@@ -292,33 +258,7 @@ def call_openrouter_api(prompt, conversation_history, model, system_prompt):
         if response.status_code == 200:
             response_data = response.json()
             if 'choices' in response_data and len(response_data['choices']) > 0:
-                message = response_data['choices'][0]['message']
-                
-                # Special handling for DeepSeek models - format Chain of Thought
-                if "deepseek" in model.lower():
-                    content = message.get('content', '')
-                    reasoning = None
-                    
-                    # Try to get reasoning from function call
-                    if 'function_call' in message:
-                        try:
-                            function_args = json.loads(message['function_call']['arguments'])
-                            reasoning = function_args.get('reasoning', '')
-                        except:
-                            pass
-                    
-                    # Format the display text with both CoT and final answer
-                    display_text = ""
-                    if reasoning:
-                        display_text += f"[Chain of Thought]\n{reasoning}\n\n"
-                    display_text += f"[Final Answer]\n{content}"
-                    
-                    return {
-                        "display": display_text,
-                        "content": content
-                    }
-                
-                return message['content']
+                return response_data['choices'][0]['message']['content']
             else:
                 print(f"Unexpected response structure: {response_data}")
                 return None
@@ -329,20 +269,6 @@ def call_openrouter_api(prompt, conversation_history, model, system_prompt):
     except Exception as e:
         print(f"Error calling OpenRouter API: {e}")
         return None
-    
-def setup_image_directory():
-    """Create an 'images' directory in the project root if it doesn't exist"""
-    image_dir = Path("images")
-    image_dir.mkdir(exist_ok=True)
-    return image_dir
-
-def cleanup_old_images(image_dir, max_age_hours=24):
-    """Remove images older than max_age_hours"""
-    current_time = datetime.now()
-    for image_file in image_dir.glob("*.jpg"):
-        file_age = datetime.fromtimestamp(image_file.stat().st_mtime)
-        if (current_time - file_age).total_seconds() > max_age_hours * 3600:
-            image_file.unlink()
 
 def call_replicate_api(prompt, conversation_history, model, gui=None):
     try:
@@ -389,7 +315,94 @@ def call_replicate_api(prompt, conversation_history, model, gui=None):
     except Exception as e:
         print(f"Error calling Flux API: {e}")
         return None
-    
+
+def call_deepseek_api(prompt, conversation_history, model, system_prompt):
+    """Call the DeepSeek model through Replicate API."""
+    try:
+        # Format messages for the conversation history
+        formatted_history = ""
+        if system_prompt:
+            formatted_history += f"System: {system_prompt}\n"
+        
+        # Add conversation history ensuring proper interleaving
+        last_role = None
+        for msg in conversation_history:
+            if isinstance(msg, dict):
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                
+                # Skip if same role as last message
+                if role == last_role:
+                    continue
+                    
+                if isinstance(content, str):
+                    formatted_history += f"{role.capitalize()}: {content}\n"
+                    last_role = role
+        
+        # Add current prompt
+        formatted_history += f"User: {prompt}\n"
+        
+        print(f"\nSending to DeepSeek via Replicate:")
+        print(f"Formatted History:\n{formatted_history}")
+        
+        # Make API call
+        output = replicate.run(
+            "deepseek-ai/deepseek-r1",
+            input={
+                "prompt": formatted_history,
+                "max_tokens": 4000,
+                "temperature": 0.7
+            }
+        )
+        
+        # Collect the response
+        response_text = ''.join(output)
+        print(f"\nRaw Response: {response_text}")
+        
+        # Try to extract reasoning from <think> tags in content
+        reasoning = None
+        content = response_text
+        
+        if content:
+            import re
+            # Try both <think> and <thinking> tags
+            think_match = re.search(r'<(think|thinking)>(.*?)</\1>', content, re.DOTALL | re.IGNORECASE)
+            if think_match:
+                reasoning = think_match.group(2).strip()
+                # Remove the thinking section from the content
+                content = re.sub(r'<(think|thinking)>.*?</\1>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+        
+        # Format the response with both CoT and final answer
+        display_text = ""
+        if reasoning:
+            display_text += f"[Chain of Thought]\n{reasoning}\n\n"
+        if content:
+            display_text += f"[Final Answer]\n{content}"
+            
+        return {
+            "display": display_text,
+            "content": content
+        }
+        
+    except Exception as e:
+        print(f"Error calling DeepSeek via Replicate: {e}")
+        print(f"Error type: {type(e)}")
+        return None
+
+def setup_image_directory():
+    """Create an 'images' directory in the project root if it doesn't exist"""
+    image_dir = Path("images")
+    image_dir.mkdir(exist_ok=True)
+    return image_dir
+
+def cleanup_old_images(image_dir, max_age_hours=24):
+    """Remove images older than max_age_hours"""
+    current_time = datetime.now()
+    for image_file in image_dir.glob("*.jpg"):
+        file_age = datetime.fromtimestamp(image_file.stat().st_mtime)
+        if (current_time - file_age).total_seconds() > max_age_hours * 3600:
+            image_file.unlink()
+
 def load_ai_memory(ai_number):
     """Load AI conversation memory from JSON files"""
     try:
@@ -554,82 +567,3 @@ def call_together_api(prompt, conversation_history, model, system_prompt):
         print(f"Error calling Together API: {str(e)}")
         return None
 
-def call_deepseek_api(prompt, conversation_history, model, system_prompt):
-    """Call the DeepSeek API using their chat completion endpoint."""
-    try:
-        # Get API key from environment
-        api_key = os.getenv('DEEPSEEK_API_KEY')
-        if not api_key:
-            raise ValueError("DEEPSEEK_API_KEY not found in environment variables")
-            
-        # Initialize DeepSeek client with proper base URL
-        client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.deepseek.com/v1"
-        )
-        
-        # Format messages
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        
-        # Add conversation history ensuring proper interleaving
-        last_role = None
-        for msg in conversation_history:
-            if isinstance(msg, dict):
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                
-                # Skip if same role as last message
-                if role == last_role:
-                    continue
-                    
-                if isinstance(content, str):
-                    messages.append({
-                        "role": role,
-                        "content": content
-                    })
-                    last_role = role
-        
-        # Add current prompt only if it doesn't create consecutive user messages
-        if not messages or messages[-1]["role"] != "user":
-            messages.append({"role": "user", "content": prompt})
-        
-        print(f"\nSending to DeepSeek:")
-        print(f"Model: {model}")
-        
-        # Make API call
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=4000,
-            stream=False  # Disable streaming to get complete response with CoT
-        )
-        
-        # Extract both reasoning and content
-        if response.choices and len(response.choices) > 0:
-            choice = response.choices[0]
-            message = choice.message
-            
-            reasoning = message.reasoning_content if hasattr(message, 'reasoning_content') else None
-            content = message.content if hasattr(message, 'content') else None
-            
-            # Format the response with both CoT and final answer
-            display_text = ""
-            if reasoning:
-                display_text += f"[Chain of Thought]\n{reasoning}\n\n"
-            if content:
-                display_text += f"[Final Answer]\n{content}"
-                
-            return {
-                "display": display_text,
-                "content": content
-            }
-        
-        return None
-        
-    except Exception as e:
-        print(f"Error calling DeepSeek API: {e}")
-        if hasattr(e, 'response'):
-            print(f"Response: {e.response.text if hasattr(e.response, 'text') else e.response}")
-        return None
