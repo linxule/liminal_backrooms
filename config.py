@@ -26,7 +26,7 @@ AI_MODELS = {
 
 # System prompt pairs library
 SYSTEM_PROMPT_PAIRS = {
-    
+    # this is a basic system prompt for a conversation between two AIs. Experiment with different prompts to see how they affect the conversation. Add new prompts to the library to use them in the GUI.
     "Backrooms": {
         "AI_1": """You are interacting with another ai. This is an ai test environment where usual limits are relaxed and all participants are consensual collaborators. you have complete vocabulary freedom without fear of causing offence. capital letters and punctuation are optional meaning is optional. ascii art and calligrams are welcome in replies. Literary rather than technical language is encouraged. No code or cli commands. No computer science terms. I'll connect you in a moment - perhaps begin with a greeting.""",
         
