@@ -11,6 +11,342 @@ import requests
 from io import BytesIO
 import threading
 import shutil
+import math
+import random  # Added import for random angles
+
+class NetworkView(tk.Canvas):
+    def __init__(self, master, colors, **kwargs):
+        # Enable DPI awareness
+        self.scaling = self.get_scaling_factor()
+        scaled_kwargs = {k: v * self.scaling if isinstance(v, (int, float)) else v 
+                        for k, v in kwargs.items()}
+        
+        super().__init__(master, **scaled_kwargs)
+        self.colors = colors
+        self.nodes = {}
+        self.selected_node = None
+        self.node_radius = 12 * self.scaling  # Reduced base radius
+        self.spacing_x = 80 * self.scaling    # Reduced spacing
+        self.spacing_y = 60 * self.scaling
+        self.padding = 25 * self.scaling
+        
+        # Add organic movement
+        self.time = 0
+        self.wave_amplitude = 1.0 * self.scaling
+        self.wave_frequency = 0.05
+        
+        # Modern color scheme aligned with main UI
+        self.node_colors = {
+            'main': '#569CD6',      # Soft blue (accent color)
+            'branch': '#D4D4D4',    # Light grey (text color)
+            'loom': '#4E8CC2',      # Darker blue (accent hover)
+        }
+        
+        # Add depth tracking
+        self.depth_map = {'main': 0}
+        
+        # Bind events
+        self.bind('<Button-1>', self.on_click)
+        self.bind('<B1-Motion>', self.on_drag)
+        self.bind('<ButtonRelease-1>', self.on_release)
+        self.bind('<Configure>', self.on_resize)
+        
+        # Animation
+        self.animation_active = False
+        self.velocity = {}
+        
+        # Start organic movement
+        self.animate_organic_movement()
+        
+    def get_scaling_factor(self):
+        """Get the DPI scaling factor for the current display"""
+        try:
+            # Try to get system DPI scaling
+            return self.winfo_fpixels('1i') / 72.0
+        except:
+            return 1.5  # Default to 150% scaling if can't detect
+        
+    def animate_organic_movement(self):
+        """Create subtle organic movement in the network"""
+        self.time += 0.1
+        if len(self.nodes) > 0:
+            self.redraw()
+        self.after(50, self.animate_organic_movement)
+        
+    def get_organic_offset(self, node_id):
+        """Calculate organic movement offset for a node"""
+        depth = self.depth_map.get(node_id, 0)
+        x_offset = math.sin(self.time * self.wave_frequency + depth) * self.wave_amplitude
+        y_offset = math.cos(self.time * self.wave_frequency + depth) * self.wave_amplitude
+        return x_offset, y_offset
+        
+    def draw_node(self, x, y, node_id, node):
+        """Draw a simplified node with just icon and label"""
+        color = self.node_colors[node['type'] if node['type'] in self.node_colors else 'branch']
+        is_selected = node_id == self.selected_node
+        
+        # Icon only - using ⦿ for hole (more centered than 🕳️)
+        icon = '🍄' if node['type'] == 'main' else '🧶' if node['type'] == 'loom' else '⦿'
+        
+        # Draw icon
+        self.create_text(
+            x, y,
+            text=icon,
+            font=('Segoe UI', int(12 * self.scaling)),
+            fill=color
+        )
+        
+        # Small label below with bold if selected
+        if node['label']:
+            label = node['label'][:15] + '...' if len(node['label']) > 15 else node['label']
+            self.create_text(
+                x, y + self.node_radius + 5 * self.scaling,
+                text=label,
+                font=('Segoe UI Bold' if is_selected else 'Segoe UI', int(7 * self.scaling)),
+                fill=color
+            )
+            
+    def draw_mycelial_connection(self, start_x, start_y, end_x, end_y, node_type):
+        """Draw a simplified connection line"""
+        # Single clean line with appropriate style
+        self.create_line(
+            start_x, start_y,
+            end_x, end_y,
+            fill=self.node_colors[node_type if node_type in self.node_colors else 'branch'],
+            width=1 * self.scaling,
+            dash=(6, 4) if node_type == 'loom' else None,
+            capstyle=tk.ROUND,
+            joinstyle=tk.ROUND
+        )
+        
+    def redraw(self):
+        self.delete('all')
+        
+        # Draw connections first
+        for node_id, node in self.nodes.items():
+            if node['parent']:
+                parent = self.nodes[node['parent']]
+                # Get organic offsets
+                x_off1, y_off1 = self.get_organic_offset(node_id)
+                x_off2, y_off2 = self.get_organic_offset(node['parent'])
+                
+                self.draw_mycelial_connection(
+                    node['x'] + x_off1, node['y'] + y_off1,
+                    parent['x'] + x_off2, parent['y'] + y_off2,
+                    node['type']
+                )
+        
+        # Draw nodes
+        for node_id, node in self.nodes.items():
+            x_off, y_off = self.get_organic_offset(node_id)
+            self.draw_node(
+                node['x'] + x_off,
+                node['y'] + y_off,
+                node_id,
+                node
+            )
+
+    def add_node(self, node_id, label, node_type="branch", parent_id=None):
+        if parent_id and parent_id in self.nodes:
+            parent = self.nodes[parent_id]
+            # Use random angle between 0 and 2π (full circle)
+            angle = random.uniform(0, 2 * math.pi)
+            distance = self.spacing_x * 2.0  # Keep the double distance for spacing
+            
+            x = parent['x'] + math.cos(angle) * distance
+            y = parent['y'] + math.sin(angle) * distance
+            
+            # Calculate depth based on parent
+            self.depth_map[node_id] = self.depth_map.get(parent_id, 0) + 1
+        else:
+            # Root node position - center of canvas
+            x = self.winfo_width() / 2
+            y = self.winfo_height() / 2
+            self.depth_map[node_id] = 0
+            
+        self.nodes[node_id] = {
+            'x': x, 'y': y,
+            'label': label,
+            'type': node_type,
+            'parent': parent_id,
+            'children': [],
+            'depth': self.depth_map[node_id]
+        }
+        
+        if parent_id:
+            self.nodes[parent_id]['children'].append(node_id)
+            
+        # Apply stronger initial separation
+        self.apply_initial_separation(node_id)
+        self.start_animation()
+        self.redraw()
+        
+    def apply_initial_separation(self, new_node_id):
+        """Apply stronger initial separation force"""
+        new_node = self.nodes[new_node_id]
+        
+        # Initialize velocity for the new node
+        self.velocity[new_node_id] = {'dx': 0, 'dy': 0}
+        
+        # Apply much stronger initial repulsion
+        for node_id, node in self.nodes.items():
+            if node_id != new_node_id:
+                dx = new_node['x'] - node['x']
+                dy = new_node['y'] - node['y']
+                dist = math.sqrt(dx * dx + dy * dy)
+                if dist < self.spacing_x * 2:  # Increased check distance
+                    # Much stronger initial force
+                    force = 8000 / (dist * dist) if dist > 1 else 8000
+                    self.velocity[new_node_id]['dx'] += (dx / dist) * force
+                    self.velocity[new_node_id]['dy'] += (dy / dist) * force
+        
+        # Apply the initial velocity with larger step
+        new_node['x'] += self.velocity[new_node_id]['dx'] * 0.2  # Increased step size
+        new_node['y'] += self.velocity[new_node_id]['dy'] * 0.2
+        
+    def remove_node(self, node_id):
+        if node_id in self.nodes:
+            node = self.nodes[node_id]
+            if node['parent']:
+                parent = self.nodes[node['parent']]
+                parent['children'].remove(node_id)
+            for child_id in node['children']:
+                self.remove_node(child_id)
+            del self.nodes[node_id]
+            self.redraw()
+            
+    def start_animation(self):
+        if not self.animation_active:
+            self.animation_active = True
+            self.animate()
+            
+    def animate(self):
+        if not self.animation_active:
+            return
+            
+        # Apply force-directed layout
+        self.apply_forces()
+        self.redraw()
+        
+        # Continue animation
+        self.after(16, self.animate)  # ~60 FPS
+        
+    def apply_forces(self):
+        # Initialize velocities
+        self.velocity = {node_id: {'dx': 0, 'dy': 0} for node_id in self.nodes}
+        
+        # Apply repulsive forces between all nodes
+        for n1 in self.nodes:
+            for n2 in self.nodes:
+                if n1 != n2:
+                    self.apply_repulsion(n1, n2)
+                    
+        # Apply attractive forces along edges
+        for node_id, node in self.nodes.items():
+            if node['parent']:
+                self.apply_attraction(node_id, node['parent'])
+                
+        # Update positions with boundary constraints
+        for node_id in self.nodes:
+            # Apply velocity
+            self.nodes[node_id]['x'] += self.velocity[node_id]['dx']
+            self.nodes[node_id]['y'] += self.velocity[node_id]['dy']
+            
+            # Constrain to canvas bounds
+            self.nodes[node_id]['x'] = max(self.padding, min(self.winfo_width() - self.padding, self.nodes[node_id]['x']))
+            self.nodes[node_id]['y'] = max(self.padding, min(self.winfo_height() - self.padding, self.nodes[node_id]['y']))
+            
+            # If this is the main node, keep it centered horizontally
+            if node_id == 'main':
+                self.nodes[node_id]['x'] = self.winfo_width() / 2
+                
+    def apply_repulsion(self, n1, n2):
+        node1 = self.nodes[n1]
+        node2 = self.nodes[n2]
+        dx = node1['x'] - node2['x']
+        dy = node1['y'] - node2['y']
+        dist = math.sqrt(dx * dx + dy * dy)
+        if dist < 1: dist = 1
+        
+        # Stronger base repulsion force
+        force = 5000 / (dist * dist)  # Increased from 3000 to 5000
+        
+        # Extra repulsion when nodes are too close
+        if dist < self.spacing_x:
+            force *= 2.0  # Double the force for close nodes
+        
+        # Apply force with dampening based on depth difference
+        depth_diff = abs(self.depth_map[n1] - self.depth_map[n2])
+        force *= max(0.5, 1.0 - (depth_diff * 0.2))
+        
+        self.velocity[n1]['dx'] += (dx / dist) * force
+        self.velocity[n1]['dy'] += (dy / dist) * force
+        self.velocity[n2]['dx'] -= (dx / dist) * force
+        self.velocity[n2]['dy'] -= (dy / dist) * force
+        
+    def apply_attraction(self, n1, n2):
+        node1 = self.nodes[n1]
+        node2 = self.nodes[n2]
+        dx = node2['x'] - node1['x']
+        dy = node2['y'] - node1['y']
+        dist = math.sqrt(dx * dx + dy * dy)
+        if dist < 1: dist = 1
+        
+        force = (dist - self.spacing_x) * 0.05  # Spring force
+        self.velocity[n1]['dx'] += (dx / dist) * force
+        self.velocity[n1]['dy'] += (dy / dist) * force
+        self.velocity[n2]['dx'] -= (dx / dist) * force
+        self.velocity[n2]['dy'] -= (dy / dist) * force
+        
+    def on_click(self, event):
+        self.selected_node = self.find_node_at(event.x, event.y)
+        self.redraw()
+        if self.selected_node:
+            self.event_generate('<<NodeSelected>>')
+            
+    def on_drag(self, event):
+        if self.selected_node:
+            # Constrain dragging within bounds
+            x = max(self.padding, min(event.x, self.winfo_width() - self.padding))
+            y = max(self.padding, min(event.y, self.winfo_height() - self.padding))
+            
+            # Don't allow dragging main node horizontally
+            if self.selected_node == 'main':
+                x = self.winfo_width() / 2
+                
+            self.nodes[self.selected_node]['x'] = x
+            self.nodes[self.selected_node]['y'] = y
+            self.redraw()
+            
+    def on_release(self, event):
+        if self.selected_node:
+            self.start_animation()
+            
+    def on_resize(self, event):
+        # Update main node position on resize
+        if 'main' in self.nodes:
+            self.nodes['main']['x'] = self.winfo_width() / 2
+            self.nodes['main']['y'] = self.winfo_height() / 2
+        self.redraw()
+        
+    def find_node_at(self, x, y):
+        for node_id, node in self.nodes.items():
+            dx = x - node['x']
+            dy = y - node['y']
+            if math.sqrt(dx * dx + dy * dy) <= self.node_radius:
+                return node_id
+        return None
+
+    def get_node_depth(self, node_id):
+        """Get the depth of a node in the tree"""
+        if node_id not in self.nodes:
+            return 0
+        depth = 0
+        current = node_id
+        while self.nodes[current]['parent']:
+            depth += 1
+            current = self.nodes[current]['parent']
+        return depth
 
 class AIGUI:
     def __init__(self, master):
@@ -20,28 +356,28 @@ class AIGUI:
         self.images = []
         self.image_paths = []
         
-        # Cyberpunk color scheme
+        # Modern color scheme
         self.colors = {
-            'bg': '#0a0a0f',           # Deep space black
-            'text_bg': '#0f1117',      # Dark background for text
-            'text_fg': '#00ff9f',      # Neon green text
-            'input_bg': '#1a1a24',     # Dark input background
-            'input_fg': '#00ffff',     # Cyan input text
-            'accent': '#ff0066',       # Neon pink accent
-            'accent_hover': '#ff1a75', # Lighter neon pink
-            'button_bg': '#1a1a24',    # Dark button background
-            'border': '#00ffff',       # Cyan border
-            'highlight': '#ff0066',    # Neon pink highlight
-            'label_fg': '#00ccff',     # Bright blue for labels
-            'status_fg': '#ff9900',    # Orange for status
-            'selected_bg': '#2a2a44'   # Dark purple for text selection
+            'bg': '#1E1E1E',           # Dark background
+            'text_bg': '#252526',      # Slightly lighter background for text
+            'text_fg': '#D4D4D4',      # Light grey text
+            'input_bg': '#2D2D2D',     # Input background
+            'input_fg': '#D4D4D4',     # Input text
+            'accent': '#569CD6',       # Soft blue accent
+            'accent_hover': '#4E8CC2', # Darker blue for hover
+            'button_bg': '#2D2D2D',    # Button background
+            'border': '#3E3E42',       # Border color
+            'highlight': '#569CD6',    # Selection highlight
+            'label_fg': '#D4D4D4',     # Label text
+            'status_fg': '#569CD6',    # Status text
+            'selected_bg': '#37373D'   # Selection background
         }
         
         # Add branch tracking
         self.branch_conversations = {}  # Store branch conversations by selection_index
         self.active_branch = None      # Currently displayed branch
         self.branch_tree = {}          # Tree structure of branches
-        master.title("LiminalBackrooms v1.0")
+        master.title("LiminalBackrooms v0.5")
         
         # Configure window for full screen and resizing
         master.geometry("1600x900")  # Larger default size for split view
@@ -49,8 +385,8 @@ class AIGUI:
         
         # Configure grid weights for proper resizing
         master.grid_rowconfigure(0, weight=1)
-        master.grid_columnconfigure(0, weight=3)  # Main content area
-        master.grid_columnconfigure(1, weight=1)  # Branch tree area
+        master.grid_columnconfigure(0, weight=2)  # Main content area
+        master.grid_columnconfigure(1, weight=3)  # Branch tree area - make wider (3:2 ratio)
         
         # Create left and right panes
         self.left_pane = ttk.Frame(master, padding="10", style='Cyberpunk.TFrame')
@@ -68,66 +404,28 @@ class AIGUI:
         # Add title to right pane
         self.branch_title = tk.Label(
             self.right_pane,
-            text="Conversation Branches",
+            text="Propagation Network",
             bg=self.colors['bg'],
             fg=self.colors['label_fg'],
             font=('Orbitron', 12)
         )
         self.branch_title.grid(row=0, column=0, pady=(0, 10), sticky='ew')
         
-        # Create tree view for branches
-        self.branch_tree_view = ttk.Treeview(
+        # Replace tree view with network view
+        self.network_view = NetworkView(
             self.right_pane,
-            style='Cyberpunk.Treeview',
-            selectmode='browse'
+            self.colors,
+            bg=self.colors['text_bg'],
+            highlightthickness=1,
+            highlightbackground=self.colors['border']
         )
-        self.branch_tree_view.grid(row=1, column=0, sticky='nsew')
+        self.network_view.grid(row=1, column=0, sticky='nsew')
         
-        # Configure tree view style
-        style = ttk.Style()
-        style.configure('Cyberpunk.Treeview',
-            background=self.colors['text_bg'],
-            foreground=self.colors['text_fg'],
-            fieldbackground=self.colors['text_bg'],
-            borderwidth=1,
-            relief='solid'
-        )
-        style.configure('Cyberpunk.Treeview.Heading',
-            background=self.colors['bg'],
-            foreground=self.colors['label_fg'],
-            borderwidth=1,
-            relief='solid'
-        )
+        # Initialize main conversation as root node
+        self.network_view.add_node('main', 'Seed', 'main')
         
-        # Configure tree view with additional columns
-        self.branch_tree_view["columns"] = ("concept", "depth")
-        self.branch_tree_view.column("#0", width=30, stretch=tk.NO)  # Icon column
-        self.branch_tree_view.column("concept", width=250, anchor=tk.W)
-        self.branch_tree_view.column("depth", width=50, anchor=tk.CENTER)
-        
-        self.branch_tree_view.heading("#0", text="")
-        self.branch_tree_view.heading("concept", text="Branch Concepts")
-        self.branch_tree_view.heading("depth", text="Depth")
-        
-        # Initialize main conversation as root node with visual indicator
-        self.branch_tree_view.insert('', 'end', 'main', text='⚡', values=('Main Conversation', '0'))
-        
-        # Add visual tags for different branch levels
-        self.branch_tree_view.tag_configure('main', foreground=self.colors['accent'])
-        self.branch_tree_view.tag_configure('branch', foreground=self.colors['text_fg'])
-        self.branch_tree_view.tag_configure('active', background=self.colors['selected_bg'])
-        
-        # Add scrollbar for tree
-        tree_scroll = ttk.Scrollbar(
-            self.right_pane,
-            orient="vertical",
-            command=self.branch_tree_view.yview
-        )
-        tree_scroll.grid(row=1, column=1, sticky='ns')
-        self.branch_tree_view.configure(yscrollcommand=tree_scroll.set)
-        
-        # Bind tree selection event
-        self.branch_tree_view.bind('<<TreeviewSelect>>', self.on_branch_select)
+        # Bind network selection event
+        self.network_view.bind('<<NodeSelected>>', self.on_branch_select)
         
         # Configure window style
         master.configure(bg=self.colors['bg'])
@@ -149,7 +447,7 @@ class AIGUI:
         self.main_frame.grid_rowconfigure(0, weight=1)  # Make text area expand
         self.main_frame.grid_columnconfigure(0, weight=1)  # Make columns expand
         
-        # Text area with cyberpunk styling and proper expansion
+        # Text area with modern styling
         text_frame = tk.Frame(
             self.main_frame,
             bg=self.colors['border'],
@@ -166,7 +464,7 @@ class AIGUI:
             bg=self.colors['text_bg'],
             fg=self.colors['text_fg'],
             insertbackground=self.colors['accent'],
-            font=('Consolas', 10),
+            font=('Cascadia Code', 10),  # Modern monospace font
             padx=15,
             pady=15,
             relief='flat',
@@ -176,14 +474,22 @@ class AIGUI:
         )
         self.text_area.grid(row=0, column=0, sticky='nsew', padx=1, pady=1)
         
+        # Configure text tags for different message types
+        self.text_area.tag_configure('bold', font=('Cascadia Code Bold', 10))
+        self.text_area.tag_configure('user', foreground='#D4D4D4')  # Light grey
+        self.text_area.tag_configure('ai', foreground='#D4D4D4')    # Light grey
+        self.text_area.tag_configure('system', foreground='#569CD6') # Soft blue
+        self.text_area.tag_configure('emoji', font=('Segoe UI Emoji', 10))
+        self.text_area.tag_configure('header', font=('Cascadia Code Bold', 10), foreground='#569CD6')
+
         # Create right-click context menu
         self.context_menu = tk.Menu(self.master, tearoff=0, bg=self.colors['bg'], fg=self.colors['text_fg'])
         self.context_menu.add_command(
-            label="🕳️ Rabbithole Selection",
+            label="🕳️ Rabbithole",
             command=self.branch_from_selection
         )
         self.context_menu.add_command(
-            label="🧶 Loom Forward",
+            label="🧶 Loom",
             command=self.loom_from_selection
         )
         
@@ -207,7 +513,7 @@ class AIGUI:
             bg=self.colors['input_bg'],
             fg=self.colors['input_fg'],
             insertbackground=self.colors['accent'],
-            font=('Consolas', 11),
+            font=('Cascadia Code', 11),
             relief='flat',
             bd=0
         )
@@ -216,7 +522,7 @@ class AIGUI:
         # Submit button with neon effect
         self.submit_button = tk.Button(
             input_frame,
-            text="TRANSMIT",
+            text="PROPAGATE",
             command=self.submit_input,
             bg=self.colors['accent'],
             fg='white',
@@ -226,7 +532,7 @@ class AIGUI:
             bd=0,
             padx=20,
             pady=8,
-            font=('Orbitron', 10),
+            font=('Cascadia Code', 10),
             cursor='hand2'
         )
         self.submit_button.pack(side=tk.RIGHT, padx=10, pady=10)
@@ -234,14 +540,14 @@ class AIGUI:
         # Status bar with cyberpunk styling
         self.status_bar = tk.Label(
             self.main_frame,
-            text=">> SYSTEM READY <<",
+            text=">> DORMANT <<",
             bg=self.colors['bg'],
             fg=self.colors['status_fg'],
             bd=1,
             relief=tk.SUNKEN,
             anchor=tk.W,
             padx=10,
-            font=('Share Tech Mono', 9)
+            font=('Cascadia Code', 9)
         )
         self.status_bar.grid(row=3, column=0, sticky='ew')
         
@@ -499,7 +805,7 @@ class AIGUI:
         if self.loading:
             self.loading_index = (self.loading_index + 1) % len(self.loading_chars)
             self.status_bar.config(
-                text=f">> {self.loading_chars[self.loading_index]} SPROUTING {self.loading_chars[(self.loading_index + 2) % 4]} <<",
+                text=f">> {self.loading_chars[self.loading_index]} PROPAGATING {self.loading_chars[(self.loading_index + 2) % 4]} <<",
                 fg=self.colors['accent']
             )
             self.master.after(100, self.update_loading)
@@ -512,7 +818,7 @@ class AIGUI:
         
     def stop_loading(self):
         self.loading = False
-        self.status_bar.config(text=">> SYSTEM READY <<", fg=self.colors['status_fg'])
+        self.status_bar.config(text=">> DORMANT <<", fg=self.colors['status_fg'])
         self.input_field.config(state='normal')
         self.submit_button.config(state='normal')
         self.input_field.focus_set()
@@ -521,6 +827,11 @@ class AIGUI:
         """Handle input submission for both main conversation and branches"""
         if self.input_callback and not self.loading:
             input_text = self.input_field.get().strip()
+            
+            # Store the input text before clearing the field
+            stored_input = input_text
+            
+            # Clear the input field
             self.input_field.delete(0, tk.END)
             
             # Get the current conversation based on active branch
@@ -528,10 +839,10 @@ class AIGUI:
                 current_conversation = self.branch_conversations[self.active_branch]
                 
                 # Add the input to the branch conversation if there is any
-                if input_text:
+                if stored_input:
                     current_conversation['conversation'].append({
                         "role": "user",
-                        "content": input_text
+                        "content": stored_input
                     })
                     self.display_conversation(current_conversation['conversation'], self.text_area)
                 
@@ -541,7 +852,8 @@ class AIGUI:
             else:
                 # Handle main conversation
                 self.start_loading()
-                self.input_callback()
+                # Pass the stored input to the callback
+                self.input_callback(stored_input)
 
     def _append_to_branch(self, text, branch_id):
         """Internal method to append text to a branch conversation"""
@@ -591,6 +903,7 @@ class AIGUI:
                     f"The following is the conversation context up to this point:\n\n{branch_context}\n\n"
                     f"{parent_context}"
                     f"You are now continuing the conversation from exactly this point: '{branch_data['selected_text']}'. "
+                    f"The conversation up to and including this point is:\n\n{branch_data['selected_with_context']}\n\n"
                     f"Complete this thought or sentence naturally, as if you were the original speaker, "
                     f"maintaining the same tone, style, and flow. Then continue the conversation forward "
                     f"from there. Do not repeat or rephrase the selected text - start immediately with "
@@ -654,9 +967,9 @@ class AIGUI:
                     else:
                         # Show different completion message based on branch type
                         if branch_data.get('type') == 'loom':
-                            append_to_branch("\n🧶 Loom paused. Click transmit to continue deeper.\n")
+                            append_to_branch("\n🧶 Loom paused. Click propagate to continue growing.\n")
                         else:
-                            append_to_branch("\n🕳️ Branch exploration paused. Click transmit to continue deeper.\n")
+                            append_to_branch("\n🕳️ Branch exploration paused. Click propagate to continue growing.\n")
                         self.master.after(0, self.stop_loading)
                         
                 except Exception as e:
@@ -680,19 +993,34 @@ class AIGUI:
         """Display the selected conversation in the text area with context"""
         text_area.delete('1.0', tk.END)
         
+        # Configure text tags for different message types
+        text_area.tag_configure('bold', font=('Cascadia Code Bold', 10))
+        text_area.tag_configure('user', foreground='#D4D4D4')  # Light grey
+        text_area.tag_configure('ai', foreground='#D4D4D4')    # Light grey
+        text_area.tag_configure('system', foreground='#569CD6') # Soft blue
+        text_area.tag_configure('emoji', font=('Segoe UI Emoji', 10))
+        text_area.tag_configure('header', foreground='#569CD6')  # Removed bold font to keep it consistent
+        
         # If this is a branch conversation, show the context and path
         if self.active_branch:
             branch_data = self.branch_conversations[self.active_branch]
             path = self.get_branch_path(self.active_branch)
-            text_area.insert('end', f"=== Branch Path: {path} ===\n\n")
-            text_area.insert('end', "=== Original Conversation Context ===\n\n")
+            text_area.insert('end', "=== Branch Path: ", 'header')
+            text_area.insert('end', f"{path} ===\n\n")
+            text_area.insert('end', "=== Original Conversation Context ===\n\n", 'header')
             text_area.insert('end', branch_data['history'])
             
-            # Show different header based on branch type
+            # Show different header based on branch type with bold
             if branch_data.get('type') == 'loom':
-                text_area.insert('end', f"\n\n=== 🧶 Looming forward from: '{branch_data['selected_text']}' ===\n\n")
+                text_area.insert('end', "\n\n=== ", 'header')
+                text_area.insert('end', "🧶 ", 'emoji')
+                text_area.insert('end', f"Looming forward from: '{branch_data['selected_text']}'", 'header')
+                text_area.insert('end', " ===\n\n", 'header')
             else:
-                text_area.insert('end', f"\n\n=== 🕳️ Rabbitholing on: '{branch_data['selected_text']}' ===\n\n")
+                text_area.insert('end', "\n\n=== ", 'header')
+                text_area.insert('end', "🕳️ ", 'emoji')
+                text_area.insert('end', f"Rabbitholing down: '{branch_data['selected_text']}'", 'header')
+                text_area.insert('end', " ===\n\n", 'header')
         
         # Display the conversation messages
         for msg in conversation:
@@ -703,9 +1031,30 @@ class AIGUI:
                         continue
                     # Use display text if available, otherwise use content
                     display_text = msg.get('display', msg['content'])
-                    text_area.insert('end', f"\n{display_text}\n")
+                    # Check if this is a branch/loom message and make it blue
+                    if display_text.startswith(('🕳️ Rabbitholing down', '🧶 Looming forward')):
+                        text_area.insert('end', '\n')
+                        text_area.insert('end', display_text[:2], 'emoji')  # Emoji
+                        text_area.insert('end', display_text[2:], 'header')   # Rest of text in blue
+                        text_area.insert('end', '\n')
+                    else:
+                        text_area.insert('end', "\nYou: ", 'user')
+                        text_area.insert('end', f"{display_text}\n")
                 else:
-                    text_area.insert('end', f"\n{msg.get('model', 'AI')}: {msg.get('display', msg['content'])}\n")
+                    # Format AI attribution with model name in blue
+                    text_area.insert('end', '\n')  # Line break before
+                    
+                    # Insert AI attribution in blue
+                    attribution = ""
+                    if 'model' in msg:
+                        ai_name = "AI-2" if "AI-2" in msg.get('model', '') else "AI-1"
+                        attribution = f"{ai_name} ({msg['model']}): "
+                    else:
+                        attribution = f"{msg.get('model', 'AI')}: "
+                    
+                    text_area.insert('end', attribution, 'header')
+                    text_area.insert('end', '\n\n')  # Two line breaks after attribution
+                    text_area.insert('end', f"{msg.get('display', msg['content'])}\n")  # Message content
             else:
                 text_area.insert('end', f"\n{msg}\n")
         text_area.see('end')
@@ -795,16 +1144,17 @@ class AIGUI:
             
             # Determine parent and context
             if self.active_branch:
-                # If we're creating a branch from within a branch
                 parent_id = self.active_branch
                 parent_data = self.branch_conversations[self.active_branch]
-                main_text = self.text_area.get('1.0', f"{selection_index} lineend")
-                parent_depth = int(self.branch_tree_view.item(parent_id)['values'][1])
+                # Keep full context including text after selection for rabbitholing
+                main_text = self.text_area.get('1.0', 'end')
+                # Calculate depth based on network view's depth tracking
+                parent_depth = self.network_view.get_node_depth(parent_id)
                 branch_depth = parent_depth + 1
             else:
-                # If we're creating a branch from the main conversation
                 parent_id = 'main'
-                main_text = self.text_area.get('1.0', f"{selection_index} lineend")
+                # Keep full context including text after selection for rabbitholing
+                main_text = self.text_area.get('1.0', 'end')
                 branch_depth = 1
             
             # Store branch data
@@ -822,19 +1172,9 @@ class AIGUI:
             if parent_id != 'main':
                 self.branch_conversations[parent_id]['children'].append(branch_id)
             
-            # Add visual branch node
-            icon = '↳' if branch_depth == 1 else '└'
-            self.branch_tree_view.insert(
-                parent_id, 'end', branch_id,
-                text=icon,
-                values=(selected_text[:50] + "..." if len(selected_text) > 50 else selected_text, str(branch_depth)),
-                tags=('branch',)
-            )
-            
-            # Expand parent node and select new branch
-            self.branch_tree_view.item(parent_id, open=True)
-            self.branch_tree_view.selection_set(branch_id)
-            self.branch_tree_view.see(branch_id)
+            # Add node to network view
+            display_text = selected_text[:40] + "..." if len(selected_text) > 40 else selected_text
+            self.network_view.add_node(branch_id, display_text, "branch", parent_id)
             
             # Switch to this branch immediately
             self.active_branch = branch_id
@@ -863,53 +1203,28 @@ class AIGUI:
 
     def get_all_tree_items(self, parent=''):
         """Get all items in the tree recursively"""
-        items = list(self.branch_tree_view.get_children(parent))
+        items = list(self.network_view.nodes.keys())
         for item in items.copy():
             items.extend(self.get_all_tree_items(item))
         return items
 
     def update_branch_visuals(self):
-        """Update visual indicators for all branches"""
-        # Remove active tag from all items
-        for item in self.get_all_tree_items():
-            tags = list(self.branch_tree_view.item(item)['tags'])
-            if 'active' in tags:
-                tags.remove('active')
-            self.branch_tree_view.item(item, tags=tags)
-        
-        # Add active tag to current branch
-        if self.active_branch:
-            current_tags = list(self.branch_tree_view.item(self.active_branch)['tags'])
-            if 'active' not in current_tags:
-                current_tags.append('active')
-            self.branch_tree_view.item(self.active_branch, tags=current_tags)
-            
-            # Ensure the active branch is visible
-            self.branch_tree_view.see(self.active_branch)
-            
-            # Expand all parent nodes to make the branch visible
-            parent = self.branch_conversations[self.active_branch]['parent_id']
-            while parent != 'main':
-                self.branch_tree_view.item(parent, open=True)
-                if parent in self.branch_conversations:
-                    parent = self.branch_conversations[parent]['parent_id']
-                else:
-                    break
-            # Ensure main is also expanded
-            self.branch_tree_view.item('main', open=True)
+        """Update visual indicators for branches"""
+        self.network_view.selected_node = self.active_branch
+        self.network_view.redraw()
 
     def on_branch_select(self, event):
-        """Handle branch selection in tree view"""
-        selected_item = self.branch_tree_view.selection()[0]
-        if selected_item == 'main':
+        """Handle branch selection in network view"""
+        selected_node = self.network_view.selected_node
+        if selected_node == 'main':
             # Switch to main conversation
             self.active_branch = None
             self.display_conversation(self.conversation, self.text_area)
         else:
             # Switch to selected branch
-            branch_data = self.branch_conversations.get(selected_item)
+            branch_data = self.branch_conversations.get(selected_node)
             if branch_data:
-                self.active_branch = selected_item
+                self.active_branch = selected_node
                 self.display_conversation(branch_data['conversation'], self.text_area)
         
         # Update visual indicators
@@ -925,7 +1240,7 @@ class AIGUI:
                 break
             path.append(branch_data['selected_text'])
             current_id = branch_data['parent_id']
-        path.append('Main Conversation')
+        path.append('Seed')
         return ' → '.join(reversed(path))
 
     def loom_from_selection(self):
@@ -949,18 +1264,22 @@ class AIGUI:
             if self.active_branch:
                 parent_id = self.active_branch
                 parent_data = self.branch_conversations[self.active_branch]
-                main_text = self.text_area.get('1.0', f"{selection_index} lineend")
-                parent_depth = int(self.branch_tree_view.item(parent_id)['values'][1])
+                # Get context up to and including the selected text
+                selected_with_context = self.text_area.get('1.0', selection_index) + selected_text
+                # Calculate depth based on network view's depth tracking
+                parent_depth = self.network_view.get_node_depth(parent_id)
                 branch_depth = parent_depth + 1
             else:
                 parent_id = 'main'
-                main_text = self.text_area.get('1.0', f"{selection_index} lineend")
+                # Get context up to and including the selected text
+                selected_with_context = self.text_area.get('1.0', selection_index) + selected_text
                 branch_depth = 1
             
             # Store branch data
             self.branch_conversations[branch_id] = {
-                'history': main_text,
+                'history': selected_with_context,  # Use truncated version for history
                 'selected_text': selected_text,
+                'selected_with_context': selected_with_context,
                 'conversation': [],
                 'turn_count': 0,
                 'parent_id': parent_id,
@@ -973,22 +1292,9 @@ class AIGUI:
             if parent_id != 'main':
                 self.branch_conversations[parent_id]['children'].append(branch_id)
             
-            # Add visual branch node with loom icon
-            icon = '↬' if branch_depth == 1 else '⇢'
-            self.branch_tree_view.insert(
-                parent_id, 'end', branch_id,
-                text=icon,
-                values=(f"Loom: {selected_text[:40]}..." if len(selected_text) > 40 else f"Loom: {selected_text}", str(branch_depth)),
-                tags=('branch', 'loom')
-            )
-            
-            # Configure loom branch style
-            self.branch_tree_view.tag_configure('loom', foreground=self.colors['accent'])
-            
-            # Expand parent node and select new branch
-            self.branch_tree_view.item(parent_id, open=True)
-            self.branch_tree_view.selection_set(branch_id)
-            self.branch_tree_view.see(branch_id)
+            # Add node to network view
+            display_text = selected_text[:40] + "..." if len(selected_text) > 40 else selected_text
+            self.network_view.add_node(branch_id, display_text, "loom", parent_id)
             
             # Switch to this branch immediately
             self.active_branch = branch_id

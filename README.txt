@@ -1,23 +1,37 @@
-# Neural Link Interface
+# LiminalBackrooms
 
-A variation on Andy Ayrey's Infinite Backrooms that enables conversations between multiple AI models in a graphical user interface. The system supports various AI models including the Claudes, DeepSeek R1, OpenAI models, Gemini, Flux Pro and others, allowing them to interact with each other through text and image generation.
+A Python-based application that enables dynamic, branching conversations between multiple AI models in a graphical user interface. Allows for looming and rabbitholing by selecting text and right clicking. The system supports various AI models including Claude, DeepSeek, OpenRouter models (GPT-4, Grok, Qwen), and Flux, allowing them to interact with each other through text and image generation.
 
 ## Features
 
 - Multi-model AI conversations with support for:
   - Claude (Anthropic)
-  - DeepSeek R1 (DeepSeek AI)
+  - DeepSeek (DeepSeek AI)
   - OpenRouter Models:
-    - Gemini (Google)
+    - GPT-4 (OpenAI)
+    - Grok (xAI)
     - Qwen (Alibaba)
     - LLaMA (Meta)
-  - Flux Pro (Black Forest Labs) for image generation
-- Chain of Thought reasoning display for DeepSeek models
-- Customizable conversation turns and modes (AI-AI or Human-AI)
-- Multiple preset system prompt pairs
-- Image generation and analysis capabilities
-- Export functionality for conversations and generated images
+    - Gemini (Google)
+  - Flux (Black Forest Labs) for image generation
 
+- Dynamic Conversation Branching:
+  - 🕳️ Rabbithole: Explore concepts in depth while retaining full context
+  - 🧶 Loom: Continue conversations from specific points in new directions
+  - Visual network graph showing conversation branches and connections
+  - Drag-and-drop node organization
+  - Automatic node spacing and collision avoidance
+  - Easy navigation between branches
+  - User can also interject at these points
+
+- Advanced Features:
+  - Chain of Thought reasoning display for DeepSeek models
+  - Customizable conversation turns and modes (AI-AI or Human-AI)
+  - Multiple preset system prompt pairs
+  - Image generation and analysis capabilities
+  - Export functionality for conversations and generated images
+  - Modern dark-themed GUI interface
+  - Conversation memory system
 
 ## Prerequisites
 
@@ -32,22 +46,16 @@ You'll need API keys from the following services to use all features:
 1. Anthropic (Claude):
    - Sign up at: https://console.anthropic.com/
    - Endpoint: https://api.anthropic.com/v1/messages
-   - Models: claude-3-opus, claude-3.5-sonnet, claude-3.5-haiku
+   - Models: claude-3-opus, claude-3.5-sonnet, claude-3-haiku
 
 2. OpenRouter:
    - Sign up at: https://openrouter.ai/
    - Endpoint: https://openrouter.ai/api/v1/chat/completions
-   - Provides access to: Gemini, Grok, Qwen, LLaMA, and more
+   - Provides access to: GPT-4, Grok, Qwen, LLaMA, Gemini, and more
 
-3. Replicate (for Flux):
+3. Replicate (for Flux and DeepSeek R1):
    - Sign up at: https://replicate.com/
    - Used for image generation with Flux model
-
-4. DeepSeek
-   - current endpoint is at deepseek.com
-   - now offered by others such as OpenRouter but it's not set up for this yet
-
-5. OpenAI
 
 ## Installation
 
@@ -90,12 +98,6 @@ poetry install
    - Create JSON files in `memory/ai-1` and `memory/ai-2` for conversation memory
    - Format: `{"memories": [{"human": "prompt", "assistant": "response"}]}`
 
-4. Runtime Settings (via GUI):
-   - Number of conversation turns: 2-10
-   - Chat mode: AI-AI or Human-AI
-   - Model selection for each AI
-   - Prompt style selection
-
 ## Usage
 
 1. Start the application:
@@ -105,17 +107,26 @@ poetry run python main.py
 
 2. GUI Controls:
    - Mode Selection: Choose between AI-AI conversation or Human-AI interaction
-   - Iterations: Set number of conversation turns (2-10)
+   - Iterations: Set number of conversation turns (1-100)
    - AI Model Selection: Choose models for AI-1 and AI-2
-   - Scenario: Select from predefined system prompt pairs
-   - Input Field: Enter initial prompt or inspiration
+   - Prompt Style: Select from predefined conversation styles
+   - Input Field: Enter your message or initial prompt
    - Export: Save conversation and generated images
 
-3. Special Features:
+3. Branching Features:
+   - Right-click on any text to access branching options:
+     - 🕳️ Rabbithole: Explore a concept in depth
+     - 🧶 Loom: Continue from a specific point
+   - Click nodes in the network graph to navigate between branches
+   - Adjust interations and models on the fly without restarting the application
+   - Drag nodes to organize your conversation map
+   - Branches automatically space themselves for clarity
+   - (Branching doesn't work very well with images in the GUI yet. The images disappear butwill still be produced and can be found in the images folder.)
+
+4. Special Features:
    - Chain of Thought: DeepSeek models show reasoning process
    - Image Generation: Flux model creates images from prompts
    - Export: Saves conversations and images with timestamps
-
 
 ## Troubleshooting
 
@@ -135,8 +146,10 @@ poetry run python main.py
    - Check JSON file formatting
    - Monitor file permissions
 
-4. Flux Image Generation:
-   - Errors, assuming above is all good, are almost always nsfw refusals. Even fairly tame Sonnet prompts can trigger this.
+4. Branching Issues:
+   - If nodes overlap, try dragging them apart
+   - If a branch seems stuck, try clicking propagate again
+   - Check console for any error messages
 
 ## Contributing
 
@@ -148,24 +161,16 @@ poetry run python main.py
 
 ## License
 
-This project is licensed under the MIT License - a permissive open-source license that allows you to:
-- Use the software commercially
-- Modify the source code
-- Distribute the software
-- Use it privately
-- Sublicense it
-
-The only requirement is that you include the original copyright notice and license terms in any copy of the software/source code.
-
-Full license text can be found in the LICENSE file.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Acknowledgments
 
-- Anthropic's Claude API
+- Anthropic
 - DeepSeek AI
 - OpenRouter
 - Black Forest Labs' Flux
 - Open-source contributors
+- Andy Ayrey and Janus, both huge inspirations for this project
 
 ## Support
 

@@ -234,8 +234,9 @@ def run_conversation(gui):
     def process_turns(user_input=None):
         def run_conversation_thread():
             try:
-                # Use passed input or get from field
-                input_text = user_input if user_input else gui.input_field.get()
+                # Get input text and handle it properly
+                input_text = user_input if user_input is not None else gui.input_field.get().strip()
+                print(f"Processing input text: {input_text}")  # Debug print
                 
                 # Get selected number of turns from dropdown
                 max_turns = int(gui.turns_var.get())
@@ -257,19 +258,21 @@ def run_conversation(gui):
                 if gui.turn_count >= max_turns:
                     # Don't reset conversation, just start a new set of turns
                     gui.turn_count = 0
-                    gui.append_text("\n🕳️ Conversation paused. Click transmit to continue deeper.\n")
+                    gui.append_text("\n🕳️ Conversation paused. Click propagate to continue deeper.\n")
                     gui.stop_loading()
                     return
                 
                 # Check chat mode
                 chat_mode = gui.mode_var.get()
                 
+                # Always display and add the user's input if provided
+                if input_text:
+                    print(f"Adding input to conversation: {input_text}")  # Debug print
+                    gui.append_text(f"\nYou: {input_text}\n")
+                    gui.conversation.append({"role": "user", "content": input_text})
+                    print(f"Conversation after adding input: {gui.conversation}")  # Debug print
+                
                 if chat_mode == "Human-AI":
-                    # Always display the user's input
-                    if input_text.strip():
-                        gui.append_text(f"\nYou: {input_text}\n")
-                        gui.conversation.append({"role": "user", "content": input_text})
-                    
                     # Update status
                     gui.status_bar.config(text=f"AI is thinking...")
                     
@@ -277,11 +280,6 @@ def run_conversation(gui):
                     gui.conversation = ai_turn("AI-2", gui.conversation, ai_2_model, ai_2_prompt, gui)
                     gui.turn_count += 1
                 else:
-                    # For first turn in AI-AI mode, use user input
-                    if gui.turn_count == 0 and input_text.strip():
-                        gui.conversation.append({"role": "user", "content": input_text})
-                        gui.append_text(f"\nYou: {input_text}\n")
-                    
                     # Process both AIs' turns
                     # Update status for AI-1
                     gui.status_bar.config(text=f"AI-1 is thinking...")
@@ -303,7 +301,7 @@ def run_conversation(gui):
                         # Schedule next turn with a delay
                         gui.master.after(1000, process_turns)
                     else:
-                        gui.append_text("\n🕳️ Conversation paused. Click transmit to continue deeper.\n")
+                        gui.append_text("\n🕳️ Conversation paused. Click propagate to continue deeper.\n")
                         gui.stop_loading()
                 
             except Exception as e:
@@ -325,7 +323,7 @@ def run_conversation(gui):
 if __name__ == "__main__":
     print("Creating GUI...")
     gui = create_gui()
-    gui.append_text("Welcome! Enter your message to start the conversation.\n")
+    gui.append_text("Fertilize the backroom with an idea, or just click propagate.\n")
     
     print("Setting up conversation...")
     run_conversation(gui)
