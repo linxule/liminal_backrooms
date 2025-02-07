@@ -30,7 +30,7 @@ def is_image_message(message: dict) -> bool:
                 return True
     return False
 
-def ai_turn(ai_name, conversation, model, system_prompt, gui=None):
+def ai_turn(ai_name, conversation, model, system_prompt, gui=None, is_branch=False, branch_output=None):
     print(f"\n{'='*50}")
     print(f"Starting {model} turn...")
     print(f"Current conversation length: {len(conversation)}")
@@ -75,8 +75,9 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None):
     # Transform conversation history based on which AI is taking its turn
     full_context = []
 
-    # Add memories first
-    full_context.extend(memories)
+    # Add memories first (skip for branch conversations to maintain focus)
+    if not is_branch:
+        full_context.extend(memories)
 
     # Add all messages except the last one (which will be the prompt)
     for msg in conversation[:-1]:
@@ -146,7 +147,10 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None):
     except Exception as e:
         error_msg = f"\nError calling {model}: {str(e)}\nError type: {type(e)}"
         print(error_msg)
-        gui.append_text(f"\n{ai_name} ({model}): Failed to respond - {str(e)}\n")
+        if gui:
+            gui.append_text(f"\n{ai_name} ({model}): Failed to respond - {str(e)}\n")
+        if branch_output:
+            branch_output(f"\n{ai_name} ({model}): Failed to respond - {str(e)}\n")
         return conversation
     
     # Handle the response
@@ -159,7 +163,10 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None):
         if isinstance(response, dict):
             if "display" in response and "content" in response:
                 # Handle DeepSeek response with Chain of Thought
-                gui.append_text(f"\n{ai_name} ({model}):\n\n{response['display']}\n")
+                if gui:
+                    gui.append_text(f"\n{ai_name} ({model}):\n\n{response['display']}\n")
+                elif branch_output:
+                    branch_output(f"\n{ai_name} ({model}):\n\n{response['display']}\n")
                 conversation.append({
                     "role": "assistant",
                     "model": model,
@@ -173,7 +180,10 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None):
                 })
             else:
                 # Handle image generation response
-                gui.append_text(f"\n{ai_name} ({model}): Generated an image based on the prompt\n")
+                if gui:
+                    gui.append_text(f"\n{ai_name} ({model}): Generated an image based on the prompt\n")
+                elif branch_output:
+                    branch_output(f"\n{ai_name} ({model}): Generated an image based on the prompt\n")
                 response.update({
                     "role": "assistant",
                     "model": model,
@@ -192,7 +202,10 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None):
                                 }
                             ]
         else:
-            gui.append_text(f"\n{ai_name} ({model}):\n\n{response}\n")
+            if gui:
+                gui.append_text(f"\n{ai_name} ({model}):\n\n{response}\n")
+            elif branch_output:
+                branch_output(f"\n{ai_name} ({model}):\n\n{response}\n")
             conversation.append({
                 "role": "assistant",
                 "model": model,
@@ -205,7 +218,10 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None):
     else:
         error_msg = f"\n{model} failed to respond - no response received"
         print(error_msg)
-        gui.append_text(f"\n{ai_name} ({model}): Failed to respond\n")
+        if gui:
+            gui.append_text(f"\n{ai_name} ({model}): Failed to respond\n")
+        if branch_output:
+            branch_output(f"\n{ai_name} ({model}): Failed to respond\n")
     
     print(f"Conversation length after {model} turn: {len(conversation)}")
     return conversation
@@ -220,11 +236,6 @@ def run_conversation(gui):
             try:
                 # Use passed input or get from field
                 input_text = user_input if user_input else gui.input_field.get()
-                if not input_text.strip():
-                    gui.stop_loading()
-                    return
-                
-                print(f"Processing input: {input_text}")
                 
                 # Get selected number of turns from dropdown
                 max_turns = int(gui.turns_var.get())
@@ -236,19 +247,28 @@ def run_conversation(gui):
                 ai_1_prompt = SYSTEM_PROMPT_PAIRS[selected_prompt_pair]["AI_1"]
                 ai_2_prompt = SYSTEM_PROMPT_PAIRS[selected_prompt_pair]["AI_2"]
                 
+                # Check if we're in a branch or main conversation
+                if gui.active_branch:
+                    # Branch conversation is handled by the GUI class
+                    return
+                
+                # For main conversation:
                 # Check if we've reached the maximum number of turns
                 if gui.turn_count >= max_turns:
-                    gui.append_text("\nMaximum number of turns reached. Starting new conversation.\n")
-                    gui.conversation = []
+                    # Don't reset conversation, just start a new set of turns
                     gui.turn_count = 0
+                    gui.append_text("\n🕳️ Conversation paused. Click transmit to continue deeper.\n")
+                    gui.stop_loading()
+                    return
                 
                 # Check chat mode
                 chat_mode = gui.mode_var.get()
                 
                 if chat_mode == "Human-AI":
                     # Always display the user's input
-                    gui.append_text(f"\nYou: {input_text}\n")
-                    gui.conversation.append({"role": "user", "content": input_text})
+                    if input_text.strip():
+                        gui.append_text(f"\nYou: {input_text}\n")
+                        gui.conversation.append({"role": "user", "content": input_text})
                     
                     # Update status
                     gui.status_bar.config(text=f"AI is thinking...")
@@ -258,36 +278,41 @@ def run_conversation(gui):
                     gui.turn_count += 1
                 else:
                     # For first turn in AI-AI mode, use user input
-                    if gui.turn_count == 0:
+                    if gui.turn_count == 0 and input_text.strip():
                         gui.conversation.append({"role": "user", "content": input_text})
                         gui.append_text(f"\nYou: {input_text}\n")
                     
                     # Process both AIs' turns
-                    while gui.turn_count < max_turns:
-                        # Update status for AI-1
-                        gui.status_bar.config(text=f"AI-1 is thinking...")
-                        gui.conversation = ai_turn("AI-1", gui.conversation, ai_1_model, ai_1_prompt, gui)
-                        time.sleep(TURN_DELAY)
-                        
-                        # Update status for AI-2
-                        gui.status_bar.config(text=f"AI-2 is thinking...")
-                        gui.conversation = ai_turn("AI-2", gui.conversation, ai_2_model, ai_2_prompt, gui)
-                        time.sleep(TURN_DELAY)
-                        
-                        gui.turn_count += 1
-                        print(f"Turn {gui.turn_count} completed")
-                        
-                        # Notify user about remaining turns
-                        remaining_turns = max_turns - gui.turn_count
-                        if remaining_turns > 0:
-                            gui.append_text(f"\n({remaining_turns} turns remaining)\n")
+                    # Update status for AI-1
+                    gui.status_bar.config(text=f"AI-1 is thinking...")
+                    gui.conversation = ai_turn("AI-1", gui.conversation, ai_1_model, ai_1_prompt, gui)
+                    time.sleep(TURN_DELAY)
+                    
+                    # Update status for AI-2
+                    gui.status_bar.config(text=f"AI-2 is thinking...")
+                    gui.conversation = ai_turn("AI-2", gui.conversation, ai_2_model, ai_2_prompt, gui)
+                    time.sleep(TURN_DELAY)
+                    
+                    gui.turn_count += 1
+                    print(f"Turn {gui.turn_count} completed")
+                    
+                    # Notify user about remaining turns
+                    remaining_turns = max_turns - gui.turn_count
+                    if remaining_turns > 0:
+                        gui.append_text(f"\n({remaining_turns} turns remaining)\n")
+                        # Schedule next turn with a delay
+                        gui.master.after(1000, process_turns)
+                    else:
+                        gui.append_text("\n🕳️ Conversation paused. Click transmit to continue deeper.\n")
+                        gui.stop_loading()
                 
             except Exception as e:
                 print(f"Error during turn processing: {e}")
                 gui.append_text(f"\nError during processing: {str(e)}\n")
             finally:
-                # Always stop loading
-                gui.master.after(0, gui.stop_loading)
+                # Always stop loading if we're not continuing
+                if gui.turn_count >= max_turns or chat_mode == "Human-AI":
+                    gui.master.after(0, gui.stop_loading)
         
         # Start the conversation processing in a separate thread
         thread = threading.Thread(target=run_conversation_thread)
