@@ -1,4 +1,4 @@
-# LiminalBackrooms
+# liminal_backrooms
 
 A Python-based application that enables dynamic, branching conversations between multiple AI models in a graphical user interface. Allows for looming and rabbitholing by selecting text and right clicking. The system supports various AI models including Claude, DeepSeek, OpenRouter models (GPT-4, Grok, Qwen), and Flux, allowing them to interact with each other through text and image generation.
 

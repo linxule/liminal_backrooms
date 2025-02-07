@@ -377,7 +377,7 @@ class AIGUI:
         self.branch_conversations = {}  # Store branch conversations by selection_index
         self.active_branch = None      # Currently displayed branch
         self.branch_tree = {}          # Tree structure of branches
-        master.title("LiminalBackrooms v0.5")
+        master.title("liminal_backrooms v0.5")
         
         # Configure window for full screen and resizing
         master.geometry("1600x900")  # Larger default size for split view
