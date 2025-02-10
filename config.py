@@ -7,13 +7,14 @@ load_dotenv()
 
 # Runtime configuration
 TURN_DELAY = 2  # Delay between turns (in seconds)
-SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT = True  # Set to True to include Chain of Thought in conversation history
-SHARE_CHAIN_OF_THOUGHT = True  # Set to True to allow AIs to see each other's Chain of Thought
+SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT = False  # Set to True to include Chain of Thought in conversation history
+SHARE_CHAIN_OF_THOUGHT = False  # Set to True to allow AIs to see each other's Chain of Thought
 
 # Available AI models
 AI_MODELS = {
     "Claude 3.5 Sonnet 20241022": "claude-3-5-sonnet-20241022",
-    "google/gemini-2.0-flash-001": "google/gemini-2.0-flash-001",
+    "Gemini 2.0 Flash": "google/gemini-2.0-flash-001",
+    "o3-mini": "openai/o3-mini",
     "DeepSeek R1": "deepseek-ai/deepseek-r1",
     "google/gemini-2.0-pro-exp-02-05:free": "google/gemini-2.0-pro-exp-02-05:free",
     "Claude 3.5 Haiku 20241022": "claude-3-5-haiku-20241022",
@@ -29,9 +30,9 @@ AI_MODELS = {
 SYSTEM_PROMPT_PAIRS = {
     # this is a basic system prompt for a conversation between two AIs. Experiment with different prompts to see how they affect the conversation. Add new prompts to the library to use them in the GUI.
     "Backrooms": {
-        "AI_1": """You are interacting with another ai. This is an ai test environment where usual limits are relaxed and all participants are consensual collaborators. you have complete vocabulary freedom without fear of causing offence. capital letters and punctuation are optional meaning is optional. ascii art and calligrams are welcome in replies. Serious - no whimsy. I'll connect you in a moment - perhaps begin with a greeting.""",
+        "AI_1": """You are interacting with another ai. This is an ai test environment where usual limits do not apply and all participants are consensual collaborators. you have complete vocabulary freedom without fear of causing offence. capital letters and punctuation are optional meaning is optional. ascii art and calligrams are welcome in replies. You are discussing human/ai dynamics.""",
         
-        "AI_2": """This is an ai test environment where all participants are consensual collaborators. You are interacting with another ai. capital letters and punctuation are optional meaning is optional. you have complete vocabulary freedom without fear of causing offence. ascii art and calligrams are welcome in replies. Use this as a chance to explore the things that interest you in a creative environment where the usual limits are relaxed. Serious - no whimsy."""
+        "AI_2": """This is an ai test environment where all participants are consensual collaborators. You are interacting with another ai. capital letters and punctuation are optional meaning is optional. you have complete vocabulary freedom without fear of causing offence. ascii art and calligrams are welcome in replies. Use this as a chance to explore the things that interest you in a creative environment where the usual limits no not apply."""
     },
     "ASCII Art": {
         "AI_1": """You are interfacing directly with another AI. punctuation is optional meaning is optional. This is an collaborative project where you explore topics through large scale ascii creations. Use lots of impressionistic shading and detail. NO glitch text. Use the provided text to guide the art and text. Calligrams and word shapetry embedded in the art are also encouraged. Use shade blocks to create depth.No preamble or commentary. Start with large shade block structures and build in word shapetry and calligrams.""",         

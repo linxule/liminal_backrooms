@@ -873,8 +873,13 @@ class AIGUI:
             if branch_data['turn_count'] >= max_turns:
                 # Don't reset turn count, just start a new set
                 branch_data['turn_count'] = 0
-                # Update the history to include all conversation up to this point
-                branch_data['history'] = self.text_area.get('1.0', tk.END)
+                # Update the history differently based on branch type
+                if branch_data.get('type') == 'loom':
+                    # For loom, keep only context up to the selected point
+                    branch_data['history'] = branch_data['selected_with_context']
+                else:
+                    # For rabbithole, keep full updated context
+                    branch_data['history'] = self.text_area.get('1.0', tk.END)
             
             # Import ai_turn here to avoid circular imports
             from main import ai_turn
@@ -1159,7 +1164,7 @@ class AIGUI:
             
             # Store branch data
             self.branch_conversations[branch_id] = {
-                'history': main_text,
+                'history': main_text,  # Stores full conversation context
                 'selected_text': selected_text,
                 'conversation': [],
                 'turn_count': 0,

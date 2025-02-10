@@ -248,27 +248,51 @@ def call_openrouter_api(prompt, conversation_history, model, system_prompt):
         
         print(f"\nSending to OpenRouter:")
         print(f"Model: {model}")
+        print(f"Messages: {json.dumps(messages, indent=2)}")
         
         response = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers=headers,
-            json=payload
+            json=payload,
+            timeout=60  # Add timeout
         )
+        
+        print(f"Response status: {response.status_code}")
+        print(f"Response headers: {response.headers}")
         
         if response.status_code == 200:
             response_data = response.json()
+            print(f"Response data: {json.dumps(response_data, indent=2)}")
+            
             if 'choices' in response_data and len(response_data['choices']) > 0:
-                return response_data['choices'][0]['message']['content']
+                message = response_data['choices'][0].get('message', {})
+                if message and 'content' in message:
+                    return message['content']
+                else:
+                    print(f"Unexpected message structure: {message}")
+                    return None
             else:
                 print(f"Unexpected response structure: {response_data}")
                 return None
         else:
-            print(f"OpenRouter API error {response.status_code}: {response.text}")
-            return None
+            error_msg = f"OpenRouter API error {response.status_code}: {response.text}"
+            print(error_msg)
+            if response.status_code == 404:
+                print("Model not found. Please check if the model name is correct.")
+            elif response.status_code == 401:
+                print("Authentication error. Please check your API key.")
+            return f"Error: {error_msg}"
             
+    except requests.exceptions.Timeout:
+        print("Request timed out. The server took too long to respond.")
+        return "Error: Request timed out"
+    except requests.exceptions.RequestException as e:
+        print(f"Network error: {e}")
+        return f"Error: Network error - {str(e)}"
     except Exception as e:
         print(f"Error calling OpenRouter API: {e}")
-        return None
+        print(f"Error type: {type(e)}")
+        return f"Error: {str(e)}"
 
 def call_replicate_api(prompt, conversation_history, model, gui=None):
     try:
