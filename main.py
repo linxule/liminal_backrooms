@@ -193,11 +193,6 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None, is_branch=Fal
         if isinstance(response, dict):
             if "display" in response and "content" in response:
                 # Handle DeepSeek response with Chain of Thought
-                display_text = response["display"] if SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT else response["content"]
-                if gui:
-                    gui.append_text(f"\n{ai_name} ({model}):\n\n{display_text}\n")
-                elif branch_output:
-                    branch_output(f"\n{ai_name} ({model}):\n\n{display_text}\n")
                 conversation.append({
                     "role": "assistant",
                     "model": model,
@@ -209,6 +204,11 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None, is_branch=Fal
                         "chain_of_thought": response.get("display", "").split("[Final Answer]")[0].strip()
                     }, indent=2)
                 })
+                # Let the GUI handle the display through display_conversation
+                if gui:
+                    gui.display_conversation(conversation, gui.text_area)
+                elif branch_output:
+                    branch_output(response['display'])
             else:
                 # Handle image generation response
                 if gui:

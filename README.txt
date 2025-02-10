@@ -18,7 +18,7 @@ Huge thanks to Andy Ayrey and Janus for their endless inspiration.
 
 - Dynamic Conversation Branching:
   - 🕳️ Rabbithole: Explore concepts in depth while retaining full context
-  - 🧶 Loom: Continue conversations from specific points in new directions
+  - 🔱 Fork: Continue conversations from specific points in new directions
   - Visual network graph showing conversation branches and connections
   - Drag-and-drop node organization
   - Automatic node spacing and collision avoidance
@@ -117,7 +117,7 @@ poetry run python main.py
 3. Branching Features:
    - Right-click on any text to access branching options:
      - 🕳️ Rabbithole: Explore a concept in depth
-     - 🧶 Loom: Continue from a specific point
+     - 🔱 Fork: Continue from a specific point
    - Click nodes in the network graph to navigate between branches
    - Adjust interations and models on the fly without restarting the application
    - Drag nodes to organize your conversation map

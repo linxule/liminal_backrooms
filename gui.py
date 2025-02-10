@@ -1,6 +1,11 @@
 # gui.py
 
-from config import SYSTEM_PROMPT_PAIRS, AI_MODELS
+from config import (
+    TURN_DELAY,
+    AI_MODELS,
+    SYSTEM_PROMPT_PAIRS,
+    SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT
+)
 
 import os
 from datetime import datetime
@@ -489,8 +494,8 @@ class AIGUI:
             command=self.branch_from_selection
         )
         self.context_menu.add_command(
-            label="🧶 Loom",
-            command=self.loom_from_selection
+            label="🔱 Fork",
+            command=self.fork_from_selection
         )
         
         # Bind right-click event
@@ -871,11 +876,10 @@ class AIGUI:
             
             # Check if we've reached max turns for this branch
             if branch_data['turn_count'] >= max_turns:
-                # Don't reset turn count, just start a new set
                 branch_data['turn_count'] = 0
                 # Update the history differently based on branch type
-                if branch_data.get('type') == 'loom':
-                    # For loom, keep only context up to the selected point
+                if branch_data.get('type') == 'fork':
+                    # For fork, keep only context up to the selected point plus new conversation
                     branch_data['history'] = branch_data['selected_with_context']
                 else:
                     # For rabbithole, keep full updated context
@@ -887,37 +891,17 @@ class AIGUI:
             # Get the current prompt pair
             prompt_pair = SYSTEM_PROMPT_PAIRS[self.prompt_pair_var.get()]
             
-            # Create a special system prompt for the branch that includes the context
-            branch_context = branch_data['history']
-            
-            # Build parent context by traversing up the tree
-            parent_context = ""
-            current_parent_id = branch_data['parent_id']
-            while current_parent_id != 'main':
-                parent_branch = self.branch_conversations.get(current_parent_id)
-                if parent_branch:
-                    parent_text = parent_branch['selected_text']
-                    parent_context = f"This is a sub-branch of a conversation about '{parent_text}'. " + parent_context
-                    current_parent_id = parent_branch['parent_id']
-                else:
-                    break
-            
             # Create different prompts based on branch type
-            if branch_data.get('type') == 'loom':
+            if branch_data.get('type') == 'fork':
                 branch_prompt = (
-                    f"The following is the conversation context up to this point:\n\n{branch_context}\n\n"
-                    f"{parent_context}"
-                    f"You are now continuing the conversation from exactly this point: '{branch_data['selected_text']}'. "
-                    f"The conversation up to and including this point is:\n\n{branch_data['selected_with_context']}\n\n"
-                    f"Complete this thought or sentence naturally, as if you were the original speaker, "
-                    f"maintaining the same tone, style, and flow. Then continue the conversation forward "
-                    f"from there. Do not repeat or rephrase the selected text - start immediately with "
-                    f"the continuation of that thought."
+                    f"The following is the conversation context up to this point:\n\n{branch_data['selected_with_context']}\n\n"
+                    f"Continue the conversation naturally from this exact point: '{branch_data['selected_text']}'. "
+                    f"Complete the thought or sentence and continue forward as if you were the original speaker. "
+                    f"Do not repeat or rephrase the selected text - start immediately with the continuation."
                 )
             else:
                 branch_prompt = (
-                    f"The following is the conversation context up to this point:\n\n{branch_context}\n\n"
-                    f"{parent_context}"
+                    f"The following is the conversation context up to this point:\n\n{branch_data['history']}\n\n"
                     f"Now, let's explore and expand upon the concept of '{branch_data['selected_text']}' that emerged in this context. "
                     f"Use the previous context to inform the discussion, but focus on developing and expanding upon "
                     f"this specific concept in depth."
@@ -998,33 +982,37 @@ class AIGUI:
         """Display the selected conversation in the text area with context"""
         text_area.delete('1.0', tk.END)
         
-        # Configure text tags for different message types
+        # Configure text tags with more distinct styling
         text_area.tag_configure('bold', font=('Cascadia Code Bold', 10))
-        text_area.tag_configure('user', foreground='#D4D4D4')  # Light grey
-        text_area.tag_configure('ai', foreground='#D4D4D4')    # Light grey
-        text_area.tag_configure('system', foreground='#569CD6') # Soft blue
-        text_area.tag_configure('emoji', font=('Segoe UI Emoji', 10))
-        text_area.tag_configure('header', foreground='#569CD6')  # Removed bold font to keep it consistent
+        text_area.tag_configure('user', foreground='#569CD6')  # Soft blue for user
+        text_area.tag_configure('ai', foreground='#4EC9B0')    # Teal for AI
+        text_area.tag_configure('system', foreground='#CE9178') # Soft orange for system
+        text_area.tag_configure('emoji', font=('Segoe UI Emoji', 12))  # Larger font for emojis
+        text_area.tag_configure('header', font=('Cascadia Code Bold', 10), foreground='#569CD6')
+        text_area.tag_configure('chain_of_thought', foreground='#608B4E')  # Green for chain of thought
+        text_area.tag_configure('branch_text', foreground='#C586C0')  # Purple for branch text
         
         # If this is a branch conversation, show the context and path
         if self.active_branch:
             branch_data = self.branch_conversations[self.active_branch]
             path = self.get_branch_path(self.active_branch)
             text_area.insert('end', "=== Branch Path: ", 'header')
-            text_area.insert('end', f"{path} ===\n\n")
+            text_area.insert('end', f"{path} ===\n\n", 'branch_text')
             text_area.insert('end', "=== Original Conversation Context ===\n\n", 'header')
             text_area.insert('end', branch_data['history'])
             
-            # Show different header based on branch type with bold
-            if branch_data.get('type') == 'loom':
+            # Show different header based on branch type
+            if branch_data.get('type') == 'fork':
                 text_area.insert('end', "\n\n=== ", 'header')
-                text_area.insert('end', "🧶 ", 'emoji')
-                text_area.insert('end', f"Looming forward from: '{branch_data['selected_text']}'", 'header')
+                text_area.insert('end', "🔱 ", ('emoji', 'branch_text'))
+                text_area.insert('end', f"Forking forward from: ", 'header')
+                text_area.insert('end', f"'{branch_data['selected_text']}'", 'branch_text')
                 text_area.insert('end', " ===\n\n", 'header')
             else:
                 text_area.insert('end', "\n\n=== ", 'header')
-                text_area.insert('end', "🕳️ ", 'emoji')
-                text_area.insert('end', f"Rabbitholing down: '{branch_data['selected_text']}'", 'header')
+                text_area.insert('end', "🕳️ ", ('emoji', 'branch_text'))
+                text_area.insert('end', f"Rabbitholing down: ", 'header')
+                text_area.insert('end', f"'{branch_data['selected_text']}'", 'branch_text')
                 text_area.insert('end', " ===\n\n", 'header')
         
         # Display the conversation messages
@@ -1034,34 +1022,49 @@ class AIGUI:
                     # Skip the initial branch message since we already showed it in the header
                     if self.active_branch and msg.get('display', '').startswith(('🕳️ Rabbitholing on', '🧶 Looming forward')):
                         continue
-                    # Use display text if available, otherwise use content
-                    display_text = msg.get('display', msg['content'])
-                    # Check if this is a branch/loom message and make it blue
-                    if display_text.startswith(('🕳️ Rabbitholing down', '🧶 Looming forward')):
-                        text_area.insert('end', '\n')
-                        text_area.insert('end', display_text[:2], 'emoji')  # Emoji
-                        text_area.insert('end', display_text[2:], 'header')   # Rest of text in blue
-                        text_area.insert('end', '\n')
+                    
+                    # Handle user messages
+                    text_area.insert('end', "\nYou: ", 'user')
+                    
+                    # Check if message starts with emoji
+                    content = msg.get('display', msg['content'])
+                    if any(content.startswith(emoji) for emoji in ['🕳️', '🧶']):
+                        emoji_end = 2  # Length of emoji character
+                        text_area.insert('end', content[:emoji_end], 'emoji')
+                        text_area.insert('end', content[emoji_end:], 'branch_text')
                     else:
-                        text_area.insert('end', "\nYou: ", 'user')
-                        text_area.insert('end', f"{display_text}\n")
+                        text_area.insert('end', f"{content}\n", 'user')
                 else:
-                    # Format AI attribution with model name in blue
+                    # Handle AI messages
                     text_area.insert('end', '\n')  # Line break before
                     
-                    # Insert AI attribution in blue
-                    attribution = ""
+                    # Insert AI attribution ONCE
                     if 'model' in msg:
                         ai_name = "AI-2" if "AI-2" in msg.get('model', '') else "AI-1"
-                        attribution = f"{ai_name} ({msg['model']}): "
+                        text_area.insert('end', f"{ai_name} ({msg['model']}):\n\n", 'header')
                     else:
-                        attribution = f"{msg.get('model', 'AI')}: "
+                        text_area.insert('end', f"{msg.get('model', 'AI')}:\n\n", 'header')
                     
-                    text_area.insert('end', attribution, 'header')
-                    text_area.insert('end', '\n\n')  # Two line breaks after attribution
-                    text_area.insert('end', f"{msg.get('display', msg['content'])}\n")  # Message content
+                    # Handle Chain of Thought if present
+                    if 'display' in msg and SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT:
+                        cot_parts = msg['display'].split('[Final Answer]')
+                        if len(cot_parts) > 1:
+                            # Display Chain of Thought in green
+                            text_area.insert('end', cot_parts[0].strip(), 'chain_of_thought')
+                            text_area.insert('end', '\n\n[Final Answer]\n', 'header')
+                            text_area.insert('end', cot_parts[1].strip(), 'ai')
+                        else:
+                            text_area.insert('end', msg['display'], 'ai')
+                    else:
+                        text_area.insert('end', f"{msg.get('content', '')}\n", 'ai')
             else:
-                text_area.insert('end', f"\n{msg}\n")
+                # Handle plain text messages
+                if str(msg).startswith(('🕳️', '🧶')):
+                    text_area.insert('end', msg[:2], 'emoji')
+                    text_area.insert('end', msg[2:] + '\n', 'branch_text')
+                else:
+                    text_area.insert('end', f"\n{msg}\n")
+                
         text_area.see('end')
 
     def set_input_callback(self, callback):
@@ -1248,22 +1251,22 @@ class AIGUI:
         path.append('Seed')
         return ' → '.join(reversed(path))
 
-    def loom_from_selection(self):
+    def fork_from_selection(self):
         """Create a new conversation branch that continues forward from the selected text"""
         try:
             if self.text_area.tag_ranges("sel"):
                 selected_text = self.text_area.get("sel.first", "sel.last")
                 selection_index = self.text_area.index("sel.first")
-                print(f"Looming from: {selected_text} at position {selection_index}")
-                self.create_loom(selected_text, selection_index)
+                print(f"Forking from: {selected_text} at position {selection_index}")
+                self.create_fork(selected_text, selection_index)
         except tk.TclError:
             pass
 
-    def create_loom(self, selected_text, selection_index, parent_branch=None):
+    def create_fork(self, selected_text, selection_index, parent_branch=None):
         """Create a new branch that continues the conversation forward from the selected point"""
         try:
             # Generate a unique branch ID
-            branch_id = f"loom_{len(self.branch_conversations)}"
+            branch_id = f"fork_{len(self.branch_conversations)}"
             
             # Determine parent and context
             if self.active_branch:
@@ -1290,7 +1293,7 @@ class AIGUI:
                 'parent_id': parent_id,
                 'depth': branch_depth,
                 'children': [],
-                'type': 'loom'  # Mark this as a loom branch
+                'type': 'fork'  # Mark this as a fork branch
             }
             
             # Update parent's children list
@@ -1299,7 +1302,7 @@ class AIGUI:
             
             # Add node to network view
             display_text = selected_text[:40] + "..." if len(selected_text) > 40 else selected_text
-            self.network_view.add_node(branch_id, display_text, "loom", parent_id)
+            self.network_view.add_node(branch_id, display_text, "fork", parent_id)
             
             # Switch to this branch immediately
             self.active_branch = branch_id
@@ -1309,7 +1312,7 @@ class AIGUI:
             self.branch_conversations[branch_id]['conversation'].append({
                 "role": "user",
                 "content": f"Complete this thought or sentence naturally, continuing forward from exactly this point: '{selected_text}'",
-                "display": f"🧶 Looming forward from '{selected_text}'"
+                "display": f"🔱 Forking forward from '{selected_text}'"
             })
             self.display_conversation(
                 self.branch_conversations[branch_id]['conversation'],
@@ -1323,8 +1326,8 @@ class AIGUI:
             thread.start()
             
         except Exception as e:
-            print(f"Error creating loom: {e}")
-            self.append_text(f"\nError creating loom: {str(e)}\n")
+            print(f"Error creating fork: {e}")
+            self.append_text(f"\nError creating fork: {str(e)}\n")
 
 def create_gui():
     root = tk.Tk()
