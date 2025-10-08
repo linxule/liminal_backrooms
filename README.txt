@@ -8,12 +8,12 @@ Huge thanks to Andy Ayrey and Janus for their endless inspiration.
 
 - Multi-model AI conversations with support for:
   - Claude (Anthropic)
-  - DeepSeek (DeepSeek AI via Replicate)
   - OpenRouter Models:
-    - GPT-4 (OpenAI)
+    - GPT (OpenAI)
     - Grok (xAI)
     - LLaMA (Meta)
     - Gemini (Google)
+    - Anything on openrouter - if it's not listed add in config.
   - OpenAI Images (gpt-image-1) for image generation (toggle in GUI)
 
 - Dynamic Conversation Branching:
