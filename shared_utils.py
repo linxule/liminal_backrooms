@@ -980,27 +980,24 @@ def call_gemini_api(prompt, conversation_history, model, system_prompt, options=
             "parts": [{"text": prompt}]
         })
 
-        # Build config
-        config = {}
-        if system_prompt:
-            config["system_instruction"] = system_prompt
-
-        # Build generation config using SDK types
+        # Build config using SDK types - GenerateContentConfig takes all params directly
         from google.genai import types as genai_types
 
-        gen_config_kwargs = {}
+        config_kwargs = {}
+        if system_prompt:
+            config_kwargs["system_instruction"] = system_prompt
         if "temperature" in options:
-            gen_config_kwargs["temperature"] = options["temperature"]
+            config_kwargs["temperature"] = options["temperature"]
         if "top_p" in options:
-            gen_config_kwargs["top_p"] = options["top_p"]
+            config_kwargs["top_p"] = options["top_p"]
         if "max_output_tokens" in options:
-            gen_config_kwargs["max_output_tokens"] = options["max_output_tokens"]
-
-        if gen_config_kwargs:
-            config["generation_config"] = genai_types.GenerationConfig(**gen_config_kwargs)
+            config_kwargs["max_output_tokens"] = options["max_output_tokens"]
 
         # NOTE: Thinking config is not yet available in google-genai SDK v0.2.x
-        # Will be enabled when SDK supports types.ThinkingConfig
+        # Will be enabled when SDK supports thinking_config parameter
+
+        # Create typed config object
+        config = genai_types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
         # Generate content
         response = client.models.generate_content(
