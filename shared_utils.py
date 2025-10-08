@@ -995,11 +995,15 @@ def call_gemini_api(prompt, conversation_history, model, system_prompt, options=
             generation_config["max_output_tokens"] = options["max_output_tokens"]
 
         # Enable thinking mode for Gemini 2.5 models
-        from config import ENABLE_EXTENDED_THINKING, THINKING_BUDGET_TOKENS
-        if ENABLE_EXTENDED_THINKING and "gemini-2" in model.lower():
-            generation_config["thinking_config"] = {
-                "thinking_budget": THINKING_BUDGET_TOKENS
-            }
+        # NOTE: Thinking config is not yet available in google-genai SDK v0.2.x
+        # Will be enabled when SDK supports it (check for types.ThinkingConfig)
+        # from config import ENABLE_EXTENDED_THINKING, THINKING_BUDGET_TOKENS
+        # if ENABLE_EXTENDED_THINKING and "gemini-2" in model.lower():
+        #     thinking_budget = min(int(THINKING_BUDGET_TOKENS or 4096), 8192)
+        #     config["thinking_config"] = types.ThinkingConfig(
+        #         include_thoughts=True,
+        #         thinking_budget=thinking_budget
+        #     )
 
         if generation_config:
             config["generation_config"] = generation_config
@@ -1013,22 +1017,33 @@ def call_gemini_api(prompt, conversation_history, model, system_prompt, options=
 
         # Extract text and thinking from response
         thinking_blocks = []
-        text_content = ""
+        text_segments = []
 
-        if hasattr(response, 'text'):
-            text_content = response.text
+        def handle_parts(parts):
+            for part in parts or []:
+                if not hasattr(part, "text"):
+                    continue
+                text = getattr(part, "text", "") or ""
+                if not text.strip():
+                    continue
+                is_thought = getattr(part, "thought", False)
+                if is_thought:
+                    thinking_blocks.append(text.strip())
+                else:
+                    text_segments.append(text.strip())
+
+        if hasattr(response, 'text') and response.text:
+            text_segments.append(response.text.strip())
         elif hasattr(response, 'candidates') and response.candidates:
             candidate = response.candidates[0]
-            # Extract thoughts if available
-            if hasattr(candidate, 'thoughts') and candidate.thoughts:
-                thinking_blocks = [str(thought) for thought in candidate.thoughts]
-            # Extract text content
-            parts = candidate.content.parts
-            text_content = "".join(part.text for part in parts if hasattr(part, 'text'))
+            content = getattr(candidate, "content", None)
+            parts = getattr(content, "parts", None) if content else None
+            handle_parts(parts)
         else:
-            text_content = str(response)
+            text_segments.append(str(response).strip())
 
-        return format_reasoning_response(text_content, thinking_blocks)
+        final_text = "\n".join(text_segments).strip()
+        return format_reasoning_response(final_text, thinking_blocks)
 
     except Exception as exc:
         print(f"Error calling Gemini API with SDK: {exc}")
