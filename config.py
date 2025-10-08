@@ -39,7 +39,7 @@ AI_MODELS = {
     },
     "Moonshot Kimi K2 0905 (Official)": {
         "provider": "moonshot",
-        "model": "kimi-k2-0905",
+        "model": "kimi-k2-0905-preview",
         "source": "official",
         "capabilities": {"reasoning": True},
         "options": {"temperature": 0.8, "max_tokens": 4000}
