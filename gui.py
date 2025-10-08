@@ -1194,7 +1194,9 @@ class ConversationPane(QWidget):
             "system": QTextCharFormat(),
             "ai_label": QTextCharFormat(),
             "normal": QTextCharFormat(),
-            "error": QTextCharFormat()
+            "error": QTextCharFormat(),
+            "header": QTextCharFormat(),
+            "chain_of_thought": QTextCharFormat()
         }
 
         # Configure text formats using global color palette
@@ -1204,6 +1206,10 @@ class ConversationPane(QWidget):
         self.text_formats["ai_label"].setForeground(QColor(COLORS['accent_blue']))
         self.text_formats["normal"].setForeground(QColor(COLORS['text_normal']))
         self.text_formats["error"].setForeground(QColor(COLORS['text_error']))
+        self.text_formats["header"].setForeground(QColor(COLORS['ai_header']))
+        self.text_formats["header"].setFontWeight(QFont.Weight.Bold)
+        self.text_formats["chain_of_thought"].setForeground(QColor(COLORS['chain_of_thought']))
+        self.text_formats["chain_of_thought"].setFontItalic(True)
         
         # Make AI labels bold
         self.text_formats["ai_label"].setFontWeight(QFont.Weight.Bold)
@@ -1448,6 +1454,10 @@ class ConversationPane(QWidget):
         html += f".branch-indicator {{ color: {COLORS['text_dim']}; font-style: italic; text-align: center; margin: 8px 0; }}"
         html += f".rabbithole {{ color: {COLORS['accent_green']}; }}"
         html += f".fork {{ color: {COLORS['accent_yellow']}; }}"
+        html += f".cot-label {{ font-weight: bold; color: {COLORS['chain_of_thought']}; margin-top: 6px; }}"
+        html += f".cot-body {{ color: {COLORS['chain_of_thought']}; margin-top: 4px; white-space: pre-wrap; }}"
+        html += f".cot-final {{ margin-top: 6px; white-space: pre-wrap; }}"
+        html += f".cot-container {{ background-color: {COLORS['bg_dark']}; border-left: 3px solid {COLORS['chain_of_thought']}; padding: 8px; border-radius: 4px; margin-top: 8px; }}"
         # Removed HTML contribution styling
         html += f"pre {{ background-color: {COLORS['bg_dark']}; border: 1px solid {COLORS['border']}; border-radius: 3px; padding: 8px; overflow-x: auto; margin: 8px 0; }}"
         html += f"code {{ font-family: 'Consolas', 'Courier New', monospace; color: {COLORS['text_bright']}; }}"
@@ -1456,11 +1466,12 @@ class ConversationPane(QWidget):
         for i, message in enumerate(self.conversation):
             role = message.get("role", "")
             content = message.get("content", "")
+            final_content = message.get("final_content", content)
             ai_name = message.get("ai_name", "")
             model = message.get("model", "")
             
             # Skip empty messages
-            if not content:
+            if not (content or final_content):
                 continue
                 
             # Handle branch indicators with special styling
@@ -1474,13 +1485,13 @@ class ConversationPane(QWidget):
             # Removed HTML contribution indicator logic
             
             # Process content to handle code blocks
-            processed_content = self.process_content_with_code_blocks(content)
+            processed_final = self.process_content_with_code_blocks(final_content)
             
             # Format based on role
             if role == 'user':
                 # User message
                 html += f'<div class="message user">'
-                html += f'<div class="content">{processed_content}</div>'
+                html += f'<div class="content">{processed_final}</div>'
                 html += f'</div>'
             elif role == 'assistant':
                 # AI message
@@ -1489,7 +1500,20 @@ class ConversationPane(QWidget):
                     display_name += f" ({model})"
                 html += f'<div class="message assistant">'
                 html += f'<div class="header">\n{display_name}\n</div>'
-                html += f'<div class="content">{processed_content}</div>'
+                reasoning_text = message.get("reasoning")
+                if SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT and reasoning_text:
+                    processed_reasoning = self.process_content_with_code_blocks(reasoning_text)
+                    html += (
+                        f'<div class="content">'
+                        f'<div class="cot-container">'
+                        f'<div class="cot-label">Chain of Thought</div>'
+                        f'<div class="cot-body">{processed_reasoning}</div>'
+                        f'<div class="cot-final">{processed_final}</div>'
+                        f'</div>'
+                        f'</div>'
+                    )
+                else:
+                    html += f'<div class="content">{processed_final}</div>'
                 
                 # Removed HTML contribution indicator
                 
@@ -1497,7 +1521,7 @@ class ConversationPane(QWidget):
             elif role == 'system':
                 # System message
                 html += f'<div class="message system">'
-                html += f'<div class="content">{processed_content}</div>'
+                html += f'<div class="content">{processed_final}</div>'
                 html += f'</div>'
         
         # Set HTML in display

@@ -662,6 +662,7 @@ class ConversationManager:
         ai_message = {
             "role": "assistant",
             "content": response_content,
+            "final_content": response_content,
             "ai_name": ai_name,  # Add AI name to the message
             "model": self.get_model_for_ai(ai_name)  # Get the selected model name
         }
@@ -713,17 +714,51 @@ class ConversationManager:
                 if hasattr(self.app.left_pane.control_panel, 'auto_image_checkbox') and self.app.left_pane.control_panel.auto_image_checkbox.isChecked():
                     self.app.left_pane.append_text("\nGenerating an image based on this response...\n", "system")
                     self.generate_and_display_image(response_content, ai_name)
-        
+
         # Display result content
         if isinstance(result, dict):
+            # Persist reasoning and presentation metadata on the stored message
+            target_message = None
+            for msg in reversed(conversation):
+                if msg.get("role") == "assistant" and msg.get("ai_name") == ai_name:
+                    target_message = msg
+                    break
+
+            if target_message:
+                final_content = result.get(
+                    "content",
+                    target_message.get("final_content", target_message.get("content", ""))
+                ) or ""
+                target_message["final_content"] = final_content
+
+                reasoning_text = result.get("reasoning")
+                if reasoning_text:
+                    target_message["reasoning"] = reasoning_text
+                else:
+                    target_message.pop("reasoning", None)
+
+                display_text = result.get("display")
+                if display_text:
+                    target_message["display"] = display_text
+                else:
+                    target_message.pop("display", None)
+
+                if SHARE_CHAIN_OF_THOUGHT and display_text:
+                    target_message["content"] = display_text
+                else:
+                    target_message["content"] = final_content
+
             if "display" in result and SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT:
                 self.app.left_pane.append_text(f"\n{ai_name} ({result.get('model', '')}):\n\n", "header")
-                cot_parts = result['display'].split('[Final Answer]')
+                # Check if there's reasoning in the display
+                cot_parts = result['display'].split('[Chain of Thought]\n')
                 if len(cot_parts) > 1:
-                    self.app.left_pane.append_text(cot_parts[0].strip(), "chain_of_thought")
-                    self.app.left_pane.append_text('\n\n[Final Answer]\n', "header")
-                    self.app.left_pane.append_text(cot_parts[1].strip(), "ai")
+                    # Has reasoning - display it separately
+                    self.app.left_pane.append_text('[Chain of Thought]\n', "header")
+                    # The reasoning and content are already in cot_parts[1]
+                    self.app.left_pane.append_text(cot_parts[1], "chain_of_thought")
                 else:
+                    # No reasoning - just display the content
                     self.app.left_pane.append_text(result['display'], "ai")
             elif "content" in result:
                 self.app.left_pane.append_text(f"\n{ai_name} ({result.get('model', '')}):\n\n", "header")
@@ -1207,6 +1242,21 @@ class ConversationManager:
             border: 1px solid #444;
             color: #d4d4d4;
         }
+        .cot-section {
+            margin-top: 20px;
+            padding: 15px;
+            border-left: 4px solid #608B4E;
+            background: #242429;
+            border-radius: 4px;
+        }
+        .cot-label {
+            font-weight: bold;
+            color: #70A46C;
+            margin-bottom: 6px;
+        }
+        .cot-final {
+            margin-top: 10px;
+        }
         .html-contribution {
             margin-top: 15px;
             padding-top: 15px;
@@ -1237,6 +1287,8 @@ class ConversationManager:
             for msg in conversation:
                 role = msg.get("role", "")
                 content = msg.get("content", "")
+                final_content = msg.get("final_content", content)
+                reasoning_text = msg.get("reasoning")
                 ai_name = msg.get("ai_name", "")
                 model = msg.get("model", "")
                 timestamp = datetime.now().strftime("%B %d, %Y at %I:%M %p")
@@ -1244,14 +1296,26 @@ class ConversationManager:
                 # Skip special system messages or empty messages
                 if role == "system" and msg.get("_type") == "branch_indicator":
                     continue
-                if not content.strip():
+                if not (content or final_content):
                     continue
                 
                 # Process content to properly format code blocks and add greentext styling
-                processed_content = self.app.left_pane.process_content_with_code_blocks(content)
+                processed_final = self.app.left_pane.process_content_with_code_blocks(final_content)
                 
                 # Apply greentext styling to lines starting with '>'
-                processed_content = self.apply_greentext_styling(processed_content)
+                processed_final = self.apply_greentext_styling(processed_final)
+
+                reasoning_block = ""
+                if SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT and reasoning_text:
+                    processed_reasoning = self.app.left_pane.process_content_with_code_blocks(reasoning_text)
+                    processed_reasoning = self.apply_greentext_styling(processed_reasoning)
+                    reasoning_block = (
+                        '\n                <div class="cot-section">'
+                        '\n                    <div class="cot-label">Chain of Thought</div>'
+                        f'\n                    <div class="content">{processed_reasoning}</div>'
+                        f'\n                    <div class="cot-final">{processed_final}</div>'
+                        '\n                </div>'
+                    )
                 
                 # Message class based on role
                 message_class = role
@@ -1282,7 +1346,10 @@ class ConversationManager:
                     html_content += f'\n                <div class="header">User <span class="timestamp">{timestamp}</span></div>'
                 
                 # Add message content
-                html_content += f'\n                <div class="content">{processed_content}</div>'
+                if reasoning_block:
+                    html_content += reasoning_block
+                else:
+                    html_content += f'\n                <div class="content">{processed_final}</div>'
                 
                 # Removed HTML contribution artifact block
                 
