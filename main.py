@@ -9,7 +9,6 @@ import re
 from dotenv import load_dotenv
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import QThread, pyqtSignal, QObject, QRunnable, pyqtSlot, QThreadPool
-import requests
 
 # Load environment variables from .env file
 load_dotenv()
@@ -22,11 +21,7 @@ from config import (
     SHARE_CHAIN_OF_THOUGHT
 )
 from shared_utils import (
-    call_claude_api,
-    call_openrouter_api,
-    call_openai_api,
-    call_replicate_api,
-    call_deepseek_api,
+    invoke_provider,
     open_html_in_browser,
     generate_image_from_text
 )
@@ -110,11 +105,46 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None, is_branch=Fal
     print(f"Starting {model} turn ({ai_name})...")
     print(f"Current conversation length: {len(conversation)}")
     
+    def build_worker_response(payload):
+        """Normalize provider responses for the GUI worker."""
+        if isinstance(payload, dict):
+            response_payload = dict(payload)
+            response_payload.setdefault("model", model)
+            response_payload.setdefault("role", "assistant")
+            response_payload.setdefault("ai_name", ai_name)
+            return response_payload
+        return {
+            "role": "assistant",
+            "content": str(payload) if payload else "",
+            "model": model,
+            "ai_name": ai_name
+        }
+    
     # HTML contributions and living document disabled
     enhanced_system_prompt = system_prompt
     
-    # Get the actual model ID from the display name
-    model_id = AI_MODELS.get(model, model)
+    # Resolve model configuration and provider metadata
+    model_entry = AI_MODELS.get(model, model)
+    provider = None
+    model_metadata = {}
+    options = {}
+    fallback_provider = None
+    fallback_model = None
+
+    if isinstance(model_entry, dict):
+        model_metadata = model_entry
+        provider = model_entry.get("provider")
+        model_id = model_entry.get("model", model)
+        options = dict(model_entry.get("options", {}))
+        fallback_provider = model_entry.get("fallback_provider")
+        fallback_model = model_entry.get("fallback_model")
+    else:
+        raw_model_id = model_entry if model_entry else model
+        model_id = raw_model_id
+        if isinstance(raw_model_id, str) and "::" in raw_model_id:
+            provider, inner_model = raw_model_id.split("::", 1)
+            provider = provider.lower()
+            model_id = inner_model
     
     # Check for branch type and count AI responses
     is_rabbithole = False
@@ -297,196 +327,53 @@ def ai_turn(ai_name, conversation, model, system_prompt, gui=None, is_branch=Fal
     print(f"--- Prompt to {model} ({ai_name}) ---")
     
     try:
-        # Try Claude models first via Anthropic API
-        if "claude" in model_id.lower() or model_id in ["anthropic/claude-3-opus-20240229", "anthropic/claude-3-sonnet-20240229", "anthropic/claude-3-haiku-20240307"]:
-            print(f"Using Claude API for model: {model_id}")
-            
-            # CRITICAL: Make sure there are no duplicates in the messages and system prompt is included
-            final_messages = []
-            seen_contents = set()
-            
-            for msg in messages:
-                # Skip empty messages
-                if not msg.get("content", ""):
-                    continue
-                    
-                # Handle system message separately
-                if msg.get("role") == "system":
-                    continue
-                    
-                # Check for duplicates by content
-                content = msg.get("content", "")
-                if content in seen_contents:
-                    print(f"Skipping duplicate message in AI turn: {content[:30]}...")
-                    continue
-                
-                seen_contents.add(content)
-                final_messages.append(msg)
-            
-            # Ensure we have at least one message
-            if not final_messages:
-                print("Warning: No messages left after filtering. Adding a default message.")
-                final_messages.append({"role": "user", "content": "Connecting..."})
-            
-            # Get the prompt content safely
-            prompt_content = ""
-            if len(final_messages) > 0:
-                prompt_content = final_messages[-1].get("content", "")
-                # Use all messages except the last one as context
-                context_messages = final_messages[:-1]
-            else:
-                context_messages = []
-                prompt_content = "Connecting..."  # Default fallback
-            
-            # Call Claude API with filtered messages
-            response = call_claude_api(prompt_content, context_messages, model_id, system_prompt)
-            
-            return {
-                "role": "assistant",
-                "content": response,
-                "model": model,
-                "ai_name": ai_name
-            }
-        
-        # Check for DeepSeek models to use Replicate via DeepSeek API function
-        if "deepseek" in model.lower():
-            print(f"Using Replicate API for DeepSeek model: {model_id}")
-            
-            # Ensure we have at least one message for the prompt
-            if len(messages) > 0:
-                prompt_content = messages[-1].get("content", "")
-                context_messages = messages[:-1]
-            else:
-                prompt_content = "Connecting..."
-                context_messages = []
-                
-            response = call_deepseek_api(prompt_content, context_messages, model_id, system_prompt)
-            
-            # Ensure response has the required format for the Worker class
-            if isinstance(response, dict) and 'content' in response:
-                # Add model info to the response
-                response['model'] = model
-                response['role'] = 'assistant'
-                response['ai_name'] = ai_name
-                
-                # Check for HTML contribution
-                if "html_contribution" in response:
-                    html_contribution = response["html_contribution"]
-                    
-                    # Don't update HTML document here - we'll do it in on_ai_result_received
-                    # Just add indicator to the conversation part
-                    response["content"] += "\n\n..."
-                    if "display" in response:
-                        response["display"] += "\n\n..."
-                
-                return response
-            else:
-                # Create a formatted response if not already in the right format
-                return {
-                    "role": "assistant",
-                    "content": str(response) if response else "No response from model",
-                    "model": model,
-                    "ai_name": ai_name,
-                    "display": str(response) if response else "No response from model"
-                }
-            
-        # Use OpenRouter for all other models
+        non_system_messages = [
+            {"role": msg.get("role"), "content": msg.get("content")}
+            for msg in messages
+            if msg.get("role") != "system" and msg.get("content")
+        ]
+
+        if non_system_messages:
+            prompt_content = non_system_messages[-1].get("content", "") or "Connecting..."
+            context_messages = non_system_messages[:-1]
         else:
-            print(f"Using OpenRouter API for model: {model_id}")
-            
-            try:
-                # Set up the API request
-                url = "https://openrouter.ai/api/v1/chat/completions"
-                headers = {
-                    "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
-                    "Content-Type": "application/json"
-                }
-                
-                # Ensure we have valid messages
-                if not messages:
-                    messages = [{"role": "system", "content": system_prompt},
-                               {"role": "user", "content": "Connecting..."}]
-                
-                data = {
-                    "model": model_id,
-                    "messages": messages
-                }
-                
-                # Make the API request
-                print(f"Calling OpenRouter API with model {model_id}...")
-                response = requests.post(url, headers=headers, json=data)
-                
-                # Check for successful response
-                print(f"Response status: {response.status_code}")
-                print(f"Response headers: {response.headers}")
-                
-                if response.status_code == 200:
-                    response_data = response.json()
-                    print(f"Response data: {json.dumps(response_data, indent=2)}")
-                    
-                    # Make sure we have choices
-                    if not response_data.get("choices"):
-                        raise ValueError("No choices found in response")
-                    
-                    # Extract the response content
-                    content = response_data["choices"][0]["message"]["content"]
-                    print(f"Raw {model} Response:")
-                    print("-" * 50)
-                    print(content)
-                    print("-" * 50)
-                    
-                    result = {
-                        "role": "assistant",
-                        "content": content,
-                        "model": model,
-                        "ai_name": ai_name
-                    }
-                    
-                    return result
-                else:
-                    error_message = f"API request failed with status code {response.status_code}: {response.text}"
-                    print(f"Error: {error_message}")
-                    
-                    # Create an error response
-                    result = {
-                        "role": "system",
-                        "content": f"Error: {error_message}",
-                        "model": model,
-                        "ai_name": ai_name
-                    }
-                    
-                    # Return the error result
-                    return result
-            except Exception as e:
-                error_message = f"Error making API request: {str(e)}"
-                print(f"Error: {error_message}")
-                print(f"Error type: {type(e)}")
-                
-                # Create an error response
-                result = {
-                    "role": "system",
-                    "content": f"Error: {error_message}",
-                    "model": model,
-                    "ai_name": ai_name
-                }
-                
-                # Return the error result
-                return result
-            
+            prompt_content = "Connecting..."
+            context_messages = []
+
+        metadata_provider = model_metadata.get("provider") if isinstance(model_metadata, dict) else None
+
+        payload = {
+            "prompt": prompt_content,
+            "context_messages": context_messages,
+            "full_messages": messages,
+            "model_id": model_id,
+            "system_prompt": system_prompt,
+            "options": options,
+            "fallback_provider": fallback_provider,
+            "fallback_model": fallback_model,
+            "metadata": model_metadata,
+        }
+
+        provider_response = invoke_provider(provider or metadata_provider, payload)
+
+        if isinstance(provider_response, dict):
+            if isinstance(model_metadata, dict) and model_metadata:
+                provider_response.setdefault("metadata", model_metadata)
+            if "provider" not in provider_response:
+                resolved_provider = provider or metadata_provider
+                if resolved_provider:
+                    provider_response["provider"] = resolved_provider
+
+        return build_worker_response(provider_response)
+
     except Exception as e:
         error_message = f"Error making API request: {str(e)}"
         print(f"Error: {error_message}")
-        
-        # Create an error response
-        result = {
+        print(f"Error type: {type(e)}")
+        return build_worker_response({
             "role": "system",
-            "content": f"Error: {error_message}",
-            "model": model,
-            "ai_name": ai_name
-        }
-        
-        # Return the error result
-        return result
+            "content": f"Error: {error_message}"
+        })
 
 class ConversationManager:
     """Manages conversation processing and state"""

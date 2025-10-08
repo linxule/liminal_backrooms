@@ -1,20 +1,33 @@
 # shared_utils.py
 
-import requests
-import logging
-import replicate
-import openai
-import time
+import base64
 import json
+import logging
 import os
+import re
+import time
 from datetime import datetime
 from pathlib import Path
-from dotenv import load_dotenv
+
+import requests
+import replicate
 from anthropic import Anthropic
-import base64
-from together import Together
+from dotenv import load_dotenv
 from openai import OpenAI
-import re
+from together import Together
+from typing import Any, Callable, Dict, List, Optional
+
+try:
+    import boto3
+    from botocore.exceptions import BotoCoreError, ClientError
+except ImportError:  # pragma: no cover - optional dependency
+    boto3 = None
+
+    class BotoCoreError(Exception):
+        """Fallback BotoCoreError when botocore is unavailable."""
+
+    class ClientError(Exception):
+        """Fallback ClientError when botocore is unavailable."""
 try:
     from bs4 import BeautifulSoup
 except ImportError:
@@ -26,11 +39,124 @@ load_dotenv()
 # Initialize Anthropic client with API key
 anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
-# Initialize OpenAI client
-openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+# Initialize OpenAI client lazily to support optional API key usage
+openai_api_key = os.getenv('OPENAI_API_KEY')
+openai_client = OpenAI(api_key=openai_api_key) if openai_api_key else None
 
-def call_claude_api(prompt, messages, model_id, system_prompt=None):
+# Cache for AWS Bedrock client
+_bedrock_client = None
+
+
+def get_bedrock_client():
+    """Return a cached AWS Bedrock runtime client if available."""
+    global _bedrock_client
+
+    if _bedrock_client is not None:
+        return _bedrock_client
+
+    if not boto3:
+        return None
+
+    region = os.getenv("AWS_REGION", "us-east-1")
+    try:
+        _bedrock_client = boto3.client("bedrock-runtime", region_name=region)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"Failed to initialize AWS Bedrock client: {exc}")
+        _bedrock_client = None
+
+    return _bedrock_client
+
+
+def format_reasoning_response(content, reasoning_blocks=None):
+    """Format model responses with optional reasoning content."""
+    cleaned_content = content or ""
+    if not isinstance(cleaned_content, str):
+        cleaned_content = str(cleaned_content)
+    else:
+        cleaned_content = re.sub(
+            r'<(think|thinking)>.*?</\1>',
+            '',
+            cleaned_content,
+            flags=re.DOTALL | re.IGNORECASE
+        ).strip()
+
+    reasoning_text = None
+    if reasoning_blocks:
+        joined = "\n".join(
+            block.strip()
+            for block in reasoning_blocks
+            if isinstance(block, str) and block.strip()
+        ).strip()
+        reasoning_text = joined or None
+
+    result = {
+        "content": cleaned_content,
+    }
+    if reasoning_text:
+        result["reasoning"] = reasoning_text
+
+    # Only import config when needed to avoid circular import issues
+    from config import SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT
+
+    if SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT:
+        display_sections = []
+        if reasoning_text:
+            display_sections.append(f"[Chain of Thought]\n{reasoning_text}")
+        if cleaned_content:
+            display_sections.append(f"[Final Answer]\n{cleaned_content}")
+        if display_sections:
+            result["display"] = "\n\n".join(display_sections)
+        else:
+            result["display"] = cleaned_content
+
+    return result
+
+
+def build_error_response(message):
+    """Return a standardized error response payload."""
+    return {
+        "role": "system",
+        "content": str(message) if message else "An unknown error occurred"
+    }
+
+
+def normalize_response(response):
+    """Normalize provider responses to a standard dict structure."""
+    if response is None:
+        return build_error_response("Provider returned no response")
+
+    if isinstance(response, dict):
+        normalized = dict(response)
+        role = normalized.get("role", "assistant") or "assistant"
+        content = normalized.get("content")
+
+        if content is None and "error" in normalized:
+            content = normalized["error"]
+            role = "system"
+        if content is None:
+            content = ""
+
+        normalized["role"] = role
+        normalized["content"] = content
+        return normalized
+
+    if isinstance(response, str):
+        stripped = response.strip()
+        if stripped.lower().startswith("error"):
+            return build_error_response(stripped)
+        return {
+            "role": "assistant",
+            "content": response
+        }
+
+    return {
+        "role": "assistant",
+        "content": str(response)
+    }
+
+def call_claude_api(prompt, messages, model_id, system_prompt=None, options=None):
     """Call the Claude API with the given messages and prompt"""
+    options = options or {}
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return "Error: ANTHROPIC_API_KEY not found in environment variables"
@@ -40,9 +166,14 @@ def call_claude_api(prompt, messages, model_id, system_prompt=None):
     # Ensure we have a system prompt
     payload = {
         "model": model_id,
-        "max_tokens": 4000,
-        "temperature": 1        
+        "max_tokens": options.get("max_tokens", 4000),
+        "temperature": options.get("temperature", 1),
     }
+
+    if "top_p" in options:
+        payload["top_p"] = options["top_p"]
+    if "stop_sequences" in options:
+        payload["stop_sequences"] = options["stop_sequences"]
     
     # Set system if provided
     if system_prompt:
@@ -137,119 +268,186 @@ def call_llama_api(prompt, conversation_history, model, system_prompt):
         print(f"Error calling LLaMA API: {e}")
         return None
 
-def call_openai_api(prompt, conversation_history, model, system_prompt):
+def call_openai_api(prompt, conversation_history, model, system_prompt, options=None):
+    """Call OpenAI's official Responses API for reasoning-capable models."""
+    if not openai_client:
+        return "Error: OPENAI_API_KEY not found in environment variables"
+
+    options = options or {}
+
+    def to_text_content(text):
+        if text is None:
+            return ""
+        if not isinstance(text, str):
+            return str(text)
+        return text
+
+    messages = []
+    if system_prompt:
+        messages.append({
+            "role": "system",
+            "content": [{"type": "text", "text": to_text_content(system_prompt)}]
+        })
+
+    for msg in conversation_history:
+        role = msg.get("role")
+        content = msg.get("content")
+        if not content or not role:
+            continue
+        messages.append({
+            "role": role,
+            "content": [{"type": "text", "text": to_text_content(content)}]
+        })
+
+    messages.append({
+        "role": "user",
+        "content": [{"type": "text", "text": to_text_content(prompt)}]
+    })
+
     try:
-        messages = []
-        
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        
-        for msg in conversation_history:
-            messages.append({"role": msg["role"], "content": msg["content"]})
-        
-        messages.append({"role": "user", "content": prompt})
-        
-        response = openai.chat.completions.create(
-            model=model,
-            messages=messages,
-            # Increase max_tokens and add n parameter
-            max_tokens=4000,
-            n=1,
-            temperature=1,
-            stream=True
-        )
-        
-        collected_messages = []
-        for chunk in response:
-            if chunk.choices[0].delta.content is not None:  # Changed condition
-                collected_messages.append(chunk.choices[0].delta.content)
-                
-        full_reply = ''.join(collected_messages)
-        return full_reply
-        
+        response_kwargs = {
+            "model": model,
+            "messages": messages
+        }
+
+        if "temperature" in options:
+            response_kwargs["temperature"] = options["temperature"]
+        if "top_p" in options:
+            response_kwargs["top_p"] = options["top_p"]
+        if "max_output_tokens" in options:
+            response_kwargs["max_output_tokens"] = options["max_output_tokens"]
+
+        response = openai_client.responses.create(**response_kwargs)
+
+        final_text = getattr(response, "output_text", None)
+        if isinstance(final_text, list):
+            final_text = "\n".join(part for part in final_text if part).strip()
+        elif final_text and isinstance(final_text, str):
+            final_text = final_text.strip()
+
+        if hasattr(response, "model_dump"):
+            response_dict = response.model_dump()
+        elif hasattr(response, "to_dict"):
+            response_dict = response.to_dict()
+        else:
+            response_dict = json.loads(response.model_dump_json())
+
+        reasoning_blocks = []
+        # Attempt to use the convenience property if available
+        if not final_text:
+            final_text = response_dict.get("output_text")
+            if isinstance(final_text, list):
+                final_text = "\n".join(part for part in final_text if part).strip()
+            elif isinstance(final_text, str):
+                final_text = final_text.strip()
+
+        if not final_text:
+            output_blocks = response_dict.get("output", [])
+            text_segments = []
+            for block in output_blocks:
+                block_content = block.get("content", [])
+                for content_block in block_content:
+                    block_type = content_block.get("type")
+                    text = content_block.get("text", "")
+                    if not text:
+                        continue
+                    if block_type and "reason" in block_type:
+                        reasoning_blocks.append(text)
+                    else:
+                        text_segments.append(text)
+
+            final_text = "\n".join(text_segments).strip()
+
+        if not final_text and reasoning_blocks:
+            final_text = reasoning_blocks[-1]
+
+        result = format_reasoning_response(final_text, reasoning_blocks)
+        return result
+
     except Exception as e:
         print(f"Error calling OpenAI API: {e}")
-        return None
+        return f"Error calling OpenAI API: {str(e)}"
 
-def call_openrouter_api(prompt, conversation_history, model, system_prompt):
+def call_openrouter_api(messages, model, options=None):
     """Call the OpenRouter API to access various LLM models."""
     try:
         headers = {
             "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
             "HTTP-Referer": "http://localhost:3000",
             "Content-Type": "application/json",
-            "X-Title": "AI Conversation"  # Adding title for OpenRouter tracking
+            "X-Title": "AI Conversation"
         }
-        
-        # Format messages
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-            
-        for msg in conversation_history:
-            if msg["role"] != "system":  # Skip system prompts
-                messages.append({
-                    "role": msg["role"],
-                    "content": msg["content"]
-                })
-        
-        messages.append({"role": "user", "content": prompt})
-        
+
+        options = options or {}
         payload = {
-            "model": model,  # Using the exact model name from config
+            "model": model,
             "messages": messages,
-            "temperature": 1,
-            "max_tokens": 4000,
-            "stream": False
+            "stream": False,
+            "temperature": options.get("temperature", 1),
+            "max_tokens": options.get("max_tokens", 4000)
         }
-        
-        print(f"\nSending to OpenRouter:")
+
+        if "top_p" in options:
+            payload["top_p"] = options["top_p"]
+
+        print("\nSending to OpenRouter:")
         print(f"Model: {model}")
         print(f"Messages: {json.dumps(messages, indent=2)}")
-        
+
         response = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers=headers,
             json=payload,
-            timeout=60  # Add timeout
+            timeout=60
         )
-        
+
         print(f"Response status: {response.status_code}")
         print(f"Response headers: {response.headers}")
-        
+
         if response.status_code == 200:
             response_data = response.json()
             print(f"Response data: {json.dumps(response_data, indent=2)}")
-            
-            if 'choices' in response_data and len(response_data['choices']) > 0:
+
+            if 'choices' in response_data and response_data['choices']:
                 message = response_data['choices'][0].get('message', {})
-                if message and 'content' in message:
-                    return message['content']
-                else:
-                    print(f"Unexpected message structure: {message}")
-                    return None
-            else:
-                print(f"Unexpected response structure: {response_data}")
-                return None
-        else:
-            error_msg = f"OpenRouter API error {response.status_code}: {response.text}"
-            print(error_msg)
-            if response.status_code == 404:
-                print("Model not found. Please check if the model name is correct.")
-            elif response.status_code == 401:
-                print("Authentication error. Please check your API key.")
-            return f"Error: {error_msg}"
-            
+                content = message.get('content', '') if isinstance(message, dict) else ''
+                return format_reasoning_response(content, [])
+
+            return {
+                "role": "system",
+                "content": "Error: Unexpected response structure from OpenRouter"
+            }
+
+        error_msg = f"OpenRouter API error {response.status_code}: {response.text}"
+        print(error_msg)
+        if response.status_code == 404:
+            print("Model not found. Please check if the model name is correct.")
+        elif response.status_code == 401:
+            print("Authentication error. Please check your API key.")
+        return {
+            "role": "system",
+            "content": error_msg
+        }
+
     except requests.exceptions.Timeout:
         print("Request timed out. The server took too long to respond.")
-        return "Error: Request timed out"
+        return {
+            "role": "system",
+            "content": "Error: Request to OpenRouter timed out"
+        }
     except requests.exceptions.RequestException as e:
         print(f"Network error: {e}")
-        return f"Error: Network error - {str(e)}"
+        return {
+            "role": "system",
+            "content": f"Error: Network error - {str(e)}"
+        }
     except Exception as e:
         print(f"Error calling OpenRouter API: {e}")
         print(f"Error type: {type(e)}")
-        return f"Error: {str(e)}"
+        return {
+            "role": "system",
+            "content": f"Error: {str(e)}"
+        }
 
 def call_replicate_api(prompt, conversation_history, model, gui=None):
     try:
@@ -297,9 +495,76 @@ def call_replicate_api(prompt, conversation_history, model, gui=None):
         print(f"Error calling Flux API: {e}")
         return None
 
-def call_deepseek_api(prompt, conversation_history, model, system_prompt):
-    """Call the DeepSeek model through Replicate API."""
+
+def call_deepseek_api(prompt, conversation_history, model, system_prompt, options=None):
+    """Call DeepSeek's official API for chat and reasoning models."""
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        return "Error: DEEPSEEK_API_KEY not found in environment variables"
+
+    options = options or {}
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+
+    for msg in conversation_history:
+        role = msg.get("role")
+        content = msg.get("content")
+        if not content:
+            continue
+        messages.append({"role": role, "content": content})
+
+    messages.append({"role": "user", "content": prompt})
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+    }
+
+    if "temperature" in options:
+        payload["temperature"] = options["temperature"]
+    if "max_tokens" in options:
+        payload["max_tokens"] = options["max_tokens"]
+
     try:
+        response = requests.post(
+            "https://api.deepseek.com/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=60
+        )
+        response.raise_for_status()
+        data = response.json()
+        choices = data.get("choices", [])
+        if not choices:
+            return "No content in DeepSeek response"
+
+        message = choices[0].get("message", {})
+        content = message.get("content", "") or ""
+
+        reasoning_blocks = []
+        for reasoning_item in message.get("reasoning_content", []):
+            text = reasoning_item.get("text")
+            if text:
+                reasoning_blocks.append(text)
+
+        # DeepSeek may embed <think> tags inside the final content;
+        # format_reasoning_response handles stripping when needed.
+        return format_reasoning_response(content, reasoning_blocks)
+
+    except Exception as exc:  # pragma: no cover - network errors
+        print(f"Error calling DeepSeek API: {exc}")
+        return f"Error calling DeepSeek API: {str(exc)}"
+
+
+def call_deepseek_via_replicate(prompt, conversation_history, model, system_prompt, options=None):
+    """Call the DeepSeek model through Replicate API (legacy fallback)."""
+    try:
+        options = options or {}
         # Format messages for the conversation history
         formatted_history = ""
         if system_prompt:
@@ -331,8 +596,8 @@ def call_deepseek_api(prompt, conversation_history, model, system_prompt):
             "deepseek-ai/deepseek-r1",
             input={
                 "prompt": formatted_history,
-                "max_tokens": 8000,
-                "temperature": 1
+                "max_tokens": options.get("max_tokens", 8000),
+                "temperature": options.get("temperature", 1)
             }
         )
         
@@ -361,47 +626,12 @@ def call_deepseek_api(prompt, conversation_history, model, system_prompt):
                 html_contribution = parts[1].strip()
                 print(f"Found HTML contribution with lenient pattern: {html_contribution[:100]}...")
         
-        # Initialize result with content
-        result = {
-            "content": conversation_part
-        }
-        
-        # Only extract and format chain of thought if SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT is True
-        from config import SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT
-        if SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT:
-            # Try to extract reasoning from <think> tags in content
-            reasoning = None
-            content = conversation_part
-            
-            if content:
-                # Try both <think> and <thinking> tags
-                think_match = re.search(r'<(think|thinking)>(.*?)</\1>', content, re.DOTALL | re.IGNORECASE)
-                if think_match:
-                    reasoning = think_match.group(2).strip()
-                    # Remove the thinking section from the content
-                    content = re.sub(r'<(think|thinking)>.*?</\1>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
-            
-            # Format the response with both CoT and final answer
-            display_text = ""
-            if reasoning:
-                display_text += f"[Chain of Thought]\n{reasoning}\n\n"
-            if content:
-                display_text += f"[Final Answer]\n{content}"
-            
-            # Add display field to result
-            result["display"] = display_text
-            # Update content to be the cleaned version without thinking tags
-            result["content"] = content
-        else:
-            # If not showing chain of thought, just use the raw content
-            # Still clean up any thinking tags from the content
-            content = conversation_part
-            if content:
-                # Remove any thinking tags from the content
-                content = re.sub(r'<(think|thinking)>.*?</\1>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
-                result["content"] = content
-        
-        # Add HTML contribution if found
+        reasoning_blocks = []
+        for match in re.findall(r'<(think|thinking)>(.*?)</\1>', conversation_part, re.DOTALL | re.IGNORECASE):
+            reasoning_blocks.append(match[1].strip())
+
+        result = format_reasoning_response(conversation_part, reasoning_blocks)
+
         if html_contribution:
             result["html_contribution"] = html_contribution
             
@@ -411,6 +641,419 @@ def call_deepseek_api(prompt, conversation_history, model, system_prompt):
         print(f"Error calling DeepSeek via Replicate: {e}")
         print(f"Error type: {type(e)}")
         return None
+
+
+def call_moonshot_api(prompt, conversation_history, model, system_prompt, options=None):
+    """Call Moonshot AI's official API."""
+    api_key = os.getenv("MOONSHOT_API_KEY")
+    if not api_key:
+        return "Error: MOONSHOT_API_KEY not found in environment variables"
+
+    options = options or {}
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+
+    for msg in conversation_history:
+        content = msg.get("content")
+        if not content:
+            continue
+        messages.append({"role": msg.get("role", "user"), "content": content})
+
+    messages.append({"role": "user", "content": prompt})
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+    }
+
+    if "temperature" in options:
+        payload["temperature"] = options["temperature"]
+    if "max_tokens" in options:
+        payload["max_tokens"] = options["max_tokens"]
+
+    try:
+        response = requests.post(
+            "https://api.moonshot.cn/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=60
+        )
+        response.raise_for_status()
+        data = response.json()
+        choices = data.get("choices", [])
+        if not choices:
+            return "No content in Moonshot response"
+
+        message = choices[0].get("message", {})
+        content = message.get("content", "") or ""
+        return format_reasoning_response(content, [])
+    except Exception as exc:
+        print(f"Error calling Moonshot API: {exc}")
+        return f"Error calling Moonshot API: {str(exc)}"
+
+
+def call_bigmodel_api(prompt, conversation_history, model, system_prompt, options=None):
+    """Call BigModel (Zhipu) GLM models via official API."""
+    api_key = os.getenv("BIGMODEL_API_KEY")
+    if not api_key:
+        return "Error: BIGMODEL_API_KEY not found in environment variables"
+
+    options = options or {}
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+
+    for msg in conversation_history:
+        content = msg.get("content")
+        if not content:
+            continue
+        messages.append({"role": msg.get("role", "user"), "content": content})
+
+    messages.append({"role": "user", "content": prompt})
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+    }
+
+    if "temperature" in options:
+        payload["temperature"] = options["temperature"]
+    if "max_tokens" in options:
+        payload["max_tokens"] = options["max_tokens"]
+
+    try:
+        response = requests.post(
+            "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=60
+        )
+        response.raise_for_status()
+        data = response.json()
+        choices = data.get("choices", [])
+        if not choices:
+            return "No content in BigModel response"
+
+        message = choices[0].get("message", {})
+        content = message.get("content", "") or ""
+        return format_reasoning_response(content, [])
+    except Exception as exc:
+        print(f"Error calling BigModel API: {exc}")
+        return f"Error calling BigModel API: {str(exc)}"
+
+
+def call_gemini_api(prompt, conversation_history, model, system_prompt, options=None):
+    """Call Gemini models via Google AI Studio API."""
+    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "Error: GOOGLE_API_KEY (or GEMINI_API_KEY) not found in environment variables"
+
+    options = options or {}
+    contents = []
+    if conversation_history:
+        for msg in conversation_history:
+            text = msg.get("content")
+            if not text:
+                continue
+            role = msg.get("role", "user")
+            gemini_role = "user" if role == "user" else "model"
+            contents.append({
+                "role": gemini_role,
+                "parts": [{"text": text}]
+            })
+
+    contents.append({
+        "role": "user",
+        "parts": [{"text": prompt}]
+    })
+
+    body = {
+        "contents": contents
+    }
+    if system_prompt:
+        body["system_instruction"] = {"parts": [{"text": system_prompt}]}
+
+    if any(key in options for key in ("temperature", "top_p", "max_output_tokens")):
+        generation_config = body.setdefault("generationConfig", {})
+        if "temperature" in options:
+            generation_config["temperature"] = options["temperature"]
+        if "top_p" in options:
+            generation_config["topP"] = options["top_p"]
+        if "max_output_tokens" in options:
+            generation_config["maxOutputTokens"] = options["max_output_tokens"]
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        f"?key={api_key}"
+    )
+
+    try:
+        response = requests.post(
+            url,
+            headers={"Content-Type": "application/json"},
+            json=body,
+            timeout=60
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return "No content in Gemini response"
+
+        parts = candidates[0].get("content", {}).get("parts", [])
+        text_segments = [part.get("text", "") for part in parts if part.get("text")]
+        content = "\n".join(text_segments).strip()
+        return format_reasoning_response(content, [])
+    except Exception as exc:
+        print(f"Error calling Gemini API: {exc}")
+        return f"Error calling Gemini API: {str(exc)}"
+
+
+def call_bedrock_claude_api(prompt, conversation_history, model, system_prompt, options=None):
+    """Call Anthropic models deployed on AWS Bedrock."""
+    client = get_bedrock_client()
+    if not client:
+        return "Error: AWS Bedrock client is not configured"
+
+    options = options or {}
+    messages = []
+    for msg in conversation_history:
+        text = msg.get("content")
+        if not text:
+            continue
+        role = msg.get("role", "user")
+        bedrock_role = "assistant" if role == "assistant" else "user"
+        messages.append({
+            "role": bedrock_role,
+            "content": [{"type": "text", "text": text}]
+        })
+
+    messages.append({
+        "role": "user",
+        "content": [{"type": "text", "text": prompt}]
+    })
+
+    body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "messages": messages,
+        "max_tokens": options.get("max_tokens", 4000),
+        "temperature": options.get("temperature", 1),
+    }
+    if system_prompt:
+        body["system"] = system_prompt
+
+    try:
+        response = client.invoke_model(
+            modelId=model,
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps(body).encode("utf-8")
+        )
+        raw_body = response.get("body")
+        if hasattr(raw_body, "read"):
+            parsed_body = json.loads(raw_body.read())
+        else:
+            parsed_body = json.loads(raw_body)
+
+        content_blocks = parsed_body.get("content", [])
+        text_segments = [
+            block.get("text", "")
+            for block in content_blocks
+            if block.get("type") == "text" and block.get("text")
+        ]
+        content = "\n".join(text_segments).strip()
+        return format_reasoning_response(content, [])
+
+    except (BotoCoreError, ClientError, json.JSONDecodeError) as exc:
+        print(f"Error calling AWS Bedrock for model {model}: {exc}")
+        return f"Error calling AWS Bedrock: {str(exc)}"
+
+
+def _anthropic_provider(payload):
+    return call_claude_api(
+        payload["prompt"],
+        payload["context_messages"],
+        payload["model_id"],
+        payload["system_prompt"],
+        payload.get("options")
+    )
+
+
+def _bedrock_provider(payload):
+    return call_bedrock_claude_api(
+        payload["prompt"],
+        payload["context_messages"],
+        payload["model_id"],
+        payload["system_prompt"],
+        payload.get("options")
+    )
+
+
+def _openai_provider(payload):
+    return call_openai_api(
+        payload["prompt"],
+        payload["context_messages"],
+        payload["model_id"],
+        payload["system_prompt"],
+        payload.get("options")
+    )
+
+
+def _deepseek_provider(payload):
+    return call_deepseek_api(
+        payload["prompt"],
+        payload["context_messages"],
+        payload["model_id"],
+        payload["system_prompt"],
+        payload.get("options")
+    )
+
+
+def _deepseek_replicate_provider(payload):
+    return call_deepseek_via_replicate(
+        payload["prompt"],
+        payload["context_messages"],
+        payload["model_id"],
+        payload["system_prompt"],
+        payload.get("options")
+    )
+
+
+def _moonshot_provider(payload):
+    return call_moonshot_api(
+        payload["prompt"],
+        payload["context_messages"],
+        payload["model_id"],
+        payload["system_prompt"],
+        payload.get("options")
+    )
+
+
+def _bigmodel_provider(payload):
+    return call_bigmodel_api(
+        payload["prompt"],
+        payload["context_messages"],
+        payload["model_id"],
+        payload["system_prompt"],
+        payload.get("options")
+    )
+
+
+def _gemini_provider(payload):
+    return call_gemini_api(
+        payload["prompt"],
+        payload["context_messages"],
+        payload["model_id"],
+        payload["system_prompt"],
+        payload.get("options")
+    )
+
+
+PROVIDER_REGISTRY = {
+    "anthropic": {
+        "handler": _anthropic_provider,
+        "supports_reasoning": True
+    },
+    "bedrock": {
+        "handler": _bedrock_provider,
+        "supports_reasoning": True
+    },
+    "openai": {
+        "handler": _openai_provider,
+        "supports_reasoning": True
+    },
+    "deepseek": {
+        "handler": _deepseek_provider,
+        "supports_reasoning": True
+    },
+    "deepseek_legacy": {
+        "handler": _deepseek_replicate_provider,
+        "supports_reasoning": True
+    },
+    "moonshot": {
+        "handler": _moonshot_provider,
+        "supports_reasoning": False
+    },
+    "bigmodel": {
+        "handler": _bigmodel_provider,
+        "supports_reasoning": False
+    },
+    "gemini": {
+        "handler": _gemini_provider,
+        "supports_reasoning": True
+    }
+}
+
+
+def invoke_provider(provider_name, payload):
+    """Invoke the appropriate provider based on configuration."""
+    provider_key = provider_name.lower() if provider_name else None
+    attempted = payload.setdefault("attempted_providers", [])
+    if provider_key and provider_key not in attempted:
+        attempted.append(provider_key)
+    handler_entry = PROVIDER_REGISTRY.get(provider_key) if provider_key else None
+
+    if handler_entry:
+        handler = handler_entry.get("handler")
+        try:
+            raw_result = handler(payload)
+            normalized = normalize_response(raw_result)
+            if provider_key:
+                normalized.setdefault("provider", provider_key)
+
+            fallback_key = payload.get("fallback_provider")
+            if (
+                fallback_key
+                and normalized.get("role") == "system"
+                and normalized.get("content", "").lower().startswith("error")
+            ):
+                fallback_key = fallback_key.lower()
+                if fallback_key not in payload["attempted_providers"]:
+                    fallback_payload = dict(payload)
+                    fallback_payload["model_id"] = payload.get("fallback_model", payload["model_id"])
+                    return invoke_provider(fallback_key, fallback_payload)
+
+            return normalized
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"Error while invoking provider '{provider_key}': {exc}")
+            return build_error_response(f"Provider '{provider_key}' error: {exc}")
+
+    if provider_key == "deepseek":
+        legacy_handler = PROVIDER_REGISTRY.get("deepseek_legacy", {}).get("handler")
+        if legacy_handler and "deepseek_legacy" not in payload["attempted_providers"]:
+            payload["attempted_providers"].append("deepseek_legacy")
+            try:
+                raw_result = legacy_handler(payload)
+                normalized = normalize_response(raw_result)
+                normalized.setdefault("provider", "deepseek_legacy")
+                return normalized
+            except Exception as exc:
+                print(f"DeepSeek legacy fallback failed: {exc}")
+                return build_error_response(f"DeepSeek legacy fallback error: {exc}")
+
+    # Default to OpenRouter for unknown providers or community models
+    if "openrouter" not in payload["attempted_providers"]:
+        payload["attempted_providers"].append("openrouter")
+    raw_result = call_openrouter_api(
+        payload["full_messages"],
+        payload["model_id"],
+        payload.get("options")
+    )
+    normalized = normalize_response(raw_result)
+    normalized.setdefault("provider", "openrouter")
+    return normalized
+
 
 def setup_image_directory():
     """Create an 'images' directory in the project root if it doesn't exist"""
@@ -613,6 +1256,12 @@ def process_living_document_edits(result, model_name):
 def generate_image_from_text(text, model="gpt-image-1"):
     """Generate an image based on text using OpenAI's image generation API"""
     try:
+        if not openai_client:
+            return {
+                "success": False,
+                "error": "OPENAI_API_KEY not configured; cannot generate images."
+            }
+        
         # Create a directory for the images if it doesn't exist
         image_dir = Path("images")
         image_dir.mkdir(exist_ok=True)
@@ -649,4 +1298,3 @@ def generate_image_from_text(text, model="gpt-image-1"):
             "success": False,
             "error": str(e)
         }
-

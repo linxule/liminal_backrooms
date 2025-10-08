@@ -7,13 +7,15 @@ Huge thanks to Andy Ayrey and Janus for their endless inspiration.
 ## Features
 
 - Multi-model AI conversations with support for:
-  - Claude (Anthropic)
-  - OpenRouter Models:
-    - GPT (OpenAI)
-    - Grok (xAI)
-    - LLaMA (Meta)
-    - Gemini (Google)
-    - Anything on openrouter - if it's not listed add in config.
+  - Official APIs:
+    - Anthropic Claude (latest Sonnet/Opus releases)
+    - Anthropic Sonnet 3.x via AWS Bedrock (retired + sunset models)
+    - OpenAI Responses API (o3 family, GPT‑5 family)
+    - DeepSeek Chat & Reasoner
+    - Moonshot Kimi K2 (0905)
+    - BigModel GLM‑4.6 (Zhipu)
+    - Gemini 2.5 Pro variants via Google AI Studio
+  - OpenRouter ecosystem (Grok, Qwen, LLaMA, Gemini, etc.)
   - OpenAI Images (gpt-image-1) for image generation (toggle in GUI)
 
 - Dynamic Conversation Branching:
@@ -42,24 +44,26 @@ Huge thanks to Andy Ayrey and Janus for their endless inspiration.
 
 ## API Keys Required
 
-You'll need API keys from the following services to use all features:
+You'll need API keys from the following services to use all features (only configure what you plan to call):
 
-1. Anthropic (Claude):
-   - Sign up at: https://console.anthropic.com/
-   - Endpoint: https://api.anthropic.com/v1/messages
-   - Models: claude-3-opus, claude-3.5-sonnet, claude-3-haiku
-
-2. OpenRouter:
-   - Sign up at: https://openrouter.ai/
-   - Endpoint: https://openrouter.ai/api/v1/chat/completions
-   - Provides access to: GPT-4, Grok, Qwen, LLaMA, Gemini, and more
-
-3. Replicate (for DeepSeek R1; optional):
-   - Sign up at: https://replicate.com/
-   - Used for DeepSeek R1 text generation; Flux image generation optional
-
-4. OpenAI Images (required for auto-image generation):
-   - Requires OPENAI_API_KEY for the gpt-image-1 model
+- **Anthropic (direct API):** `ANTHROPIC_API_KEY`  
+  Access the latest Claude Sonnet/Opus releases directly.
+- **AWS Bedrock (Anthropic on AWS):** `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, and `AWS_REGION`  
+  Required for retired or sunset Claude Sonnet models (Sonnet 3 / 3.5).
+- **OpenAI Responses & Images:** `OPENAI_API_KEY`  
+  Powers the Responses API (o3, GPT‑5 family) and image generation (`gpt-image-1`).
+- **DeepSeek:** `DEEPSEEK_API_KEY`  
+  Official chat and reasoning endpoints.
+- **Moonshot AI (Kimi):** `MOONSHOT_API_KEY`  
+  Official access to the Kimi K2 0905 model.
+- **BigModel / Zhipu GLM:** `BIGMODEL_API_KEY`  
+  Official GLM‑4.6 chat endpoint.
+- **Google AI Studio (Gemini 2.5 Pro):** `GOOGLE_API_KEY` (alias `GEMINI_API_KEY`)  
+  Official Gemini 2.5 Pro variants via Google AI Studio REST API.
+- **OpenRouter (optional but recommended):** `OPENROUTER_API_KEY`  
+  Provides access to Grok, Qwen, Meta LLaMA, Gemini previews, etc.
+- **Replicate (optional):** `REPLICATE_API_TOKEN`  
+  Required only for legacy DeepSeek R1 via Replicate or Flux image generation.
 
 ## Installation
 
@@ -86,16 +90,31 @@ poetry install
 1. Environment Variables (`.env`):
    - Create a `.env` file in the project root with your API keys:
    ```env
+   # Direct provider APIs
    ANTHROPIC_API_KEY=your_anthropic_api_key
+   OPENAI_API_KEY=your_openai_api_key
+   DEEPSEEK_API_KEY=your_deepseek_api_key
+   MOONSHOT_API_KEY=your_moonshot_api_key
+   BIGMODEL_API_KEY=your_bigmodel_api_key
+   GOOGLE_API_KEY=your_google_ai_studio_key
+
+   # AWS Bedrock (optional for Claude Sonnet 3.x/3.5 legacy access)
+   AWS_ACCESS_KEY_ID=your_aws_access_key
+   AWS_SECRET_ACCESS_KEY=your_aws_secret
+   AWS_REGION=us-east-1
+
+   # Aggregators / optional services
    OPENROUTER_API_KEY=your_openrouter_api_key
-   REPLICATE_API_TOKEN=your_replicate_token (not required)
-   OPENAI_API_KEY=your_openai_api_key  # For image generation (gpt-image-1)
+   REPLICATE_API_TOKEN=your_replicate_token
    ```
+   - A template is available at `.env.example`; copy it with `cp .env.example .env` and fill in the values you intend to use for this project.
+   - Optional: automate loading with tools like `direnv` or `dotenvx` so the project's `.env` is applied whenever you enter the repository.
 
 2. Application Configuration (`config.py`):
    - Runtime settings (e.g., turn delay)
    - Available AI models in `AI_MODELS` dictionary
    - System prompt pairs in `SYSTEM_PROMPT_PAIRS` dictionary
+   - Official integrations now include structured metadata (provider, capabilities, options); community/OpenRouter entries remain simple strings for backward compatibility
    - Add new models or prompt pairs by updating these dictionaries
 
 3. Memory System (optional):
@@ -128,7 +147,7 @@ poetry run python main.py
    - (Branching doesn't work very well with images in the GUI yet. The images disappear but will still be produced and can be found in the images folder.)
 
 4. Special Features:
-   - Chain of Thought: DeepSeek models show reasoning process
+   - Chain of Thought: DeepSeek, OpenAI o-series, and other reasoning models surface thinking traces when `SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT` is enabled
    - Image Generation: OpenAI Images (gpt-image-1) creates images from prompts
    - Export: Saves conversations and images with timestamps
 
@@ -179,4 +198,3 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Support
 
 For issues and feature requests, please use the GitHub issue tracker.
-

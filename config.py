@@ -12,8 +12,134 @@ SHARE_CHAIN_OF_THOUGHT = False  # Set to True to allow AIs to see each other's C
 
 # Available AI models
 AI_MODELS = {
-    "Claude 4.5 Sonnet 20250929": "claude-sonnet-4-5-20250929",
-    "Claude 3.5 Sonnet 20241022": "claude-3-5-sonnet-20241022",
+    # Official provider integrations
+    "Claude 4.5 Sonnet (Anthropic API)": {
+        "provider": "anthropic",
+        "model": "claude-4.5-sonnet",
+        "source": "official",
+        "capabilities": {"reasoning": True, "cot": True},
+        "options": {"temperature": 1, "max_tokens": 4000}
+    },
+    "Claude 3.5 Sonnet 20241022 (Anthropic API)": {
+        "provider": "anthropic",
+        "model": "claude-3-5-sonnet-20241022",
+        "source": "official",
+        "capabilities": {"reasoning": True, "cot": True},
+        "options": {"temperature": 1, "max_tokens": 4000}
+    },
+    "Claude 3 Opus 20240229 (Anthropic API)": {
+        "provider": "anthropic",
+        "model": "claude-3-opus-20240229",
+        "source": "official",
+        "capabilities": {"reasoning": True, "cot": True},
+        "options": {"temperature": 1, "max_tokens": 4000}
+    },
+    "Moonshot Kimi K2 0905 (Official)": {
+        "provider": "moonshot",
+        "model": "kimi-k2-0905",
+        "source": "official",
+        "capabilities": {"reasoning": True},
+        "options": {"temperature": 0.8, "max_tokens": 4000}
+    },
+    "BigModel GLM-4.6 (Official)": {
+        "provider": "bigmodel",
+        "model": "glm-4.6",
+        "source": "official",
+        "capabilities": {"reasoning": True},
+        "options": {"temperature": 0.8, "max_tokens": 4000}
+    },
+    "DeepSeek Chat (Official)": {
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "source": "official",
+        "capabilities": {"reasoning": True, "cot": True},
+        "options": {"temperature": 1},
+        "fallback_provider": "deepseek_legacy",
+        "fallback_model": "deepseek-ai/deepseek-r1"
+    },
+    "DeepSeek Reasoner (Official)": {
+        "provider": "deepseek",
+        "model": "deepseek-reasoner",
+        "source": "official",
+        "capabilities": {"reasoning": True, "cot": True},
+        "options": {"temperature": 1},
+        "fallback_provider": "deepseek_legacy",
+        "fallback_model": "deepseek-ai/deepseek-r1"
+    },
+    "OpenAI o3": {
+        "provider": "openai",
+        "model": "o3",
+        "source": "official",
+        "capabilities": {"reasoning": True, "cot": True},
+        "options": {"temperature": 1}
+    },
+    "OpenAI o3-mini": {
+        "provider": "openai",
+        "model": "o3-mini",
+        "source": "official",
+        "capabilities": {"reasoning": True},
+        "options": {"temperature": 1}
+    },
+    "OpenAI GPT-5": {
+        "provider": "openai",
+        "model": "gpt-5",
+        "source": "official",
+        "capabilities": {"reasoning": True},
+        "options": {"temperature": 1}
+    },
+    "OpenAI GPT-5o": {
+        "provider": "openai",
+        "model": "gpt-5o",
+        "source": "official",
+        "capabilities": {"reasoning": True},
+        "options": {"temperature": 1}
+    },
+    "Gemini 2.5 Pro (Google AI Studio)": {
+        "provider": "gemini",
+        "model": "gemini-2.5-pro",
+        "source": "official",
+        "capabilities": {"reasoning": True},
+        "options": {"temperature": 1}
+    },
+    "Gemini 2.5 Pro Latest (Google AI Studio)": {
+        "provider": "gemini",
+        "model": "gemini-2.5-pro-latest",
+        "source": "official",
+        "capabilities": {"reasoning": True},
+        "options": {"temperature": 1}
+    },
+    "Gemini 2.5 Pro Experimental (Google AI Studio)": {
+        "provider": "gemini",
+        "model": "gemini-2.5-pro-exp-0827",
+        "source": "official",
+        "capabilities": {"reasoning": True},
+        "options": {"temperature": 1.2}
+    },
+    "Claude 3 Sonnet 20240229 (AWS Bedrock)": {
+        "provider": "bedrock",
+        "model": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "source": "bedrock",
+        "capabilities": {"reasoning": True},
+        "options": {"temperature": 1, "max_tokens": 4000}
+    },
+    "Claude 3.5 Sonnet 20240620 (AWS Bedrock)": {
+        "provider": "bedrock",
+        "model": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "source": "bedrock",
+        "capabilities": {"reasoning": True},
+        "options": {"temperature": 1, "max_tokens": 4000}
+    },
+    "Claude 3.5 Sonnet 20241022 (AWS Bedrock)": {
+        "provider": "bedrock",
+        "model": "anthropic.claude-3-5-sonnet-20241022-v1:0",
+        "source": "bedrock",
+        "capabilities": {"reasoning": True},
+        "options": {"temperature": 1, "max_tokens": 4000}
+    },
+
+    # Existing OpenRouter & community integrations
+    "Claude 4.5 Sonnet 20250929 (OpenRouter)": "claude-sonnet-4-5-20250929",
+    "Claude 3.5 Sonnet 20241022 (OpenRouter)": "claude-3-5-sonnet-20241022",
     "Claude 4 Sonnet": "claude-sonnet-4-20250514",
     "google/gemini-2.5-pro": "google/gemini-2.5-pro",
     "claude-opus-4-1-20250805": "claude-opus-4-1-20250805",
@@ -25,7 +151,7 @@ AI_MODELS = {
     "Claude 4 Opus": "claude-opus-4-20250514",
     "Claude 3.7 Sonnet 20250219": "claude-3-7-sonnet-20250219",
     "Gemini 2.5 Flash Lite": "google/gemini-2.5-flash-lite-preview-06-17",
-    "openai/gpt-5": "openai/gpt-5",
+    "openai/gpt-5 (OpenRouter)": "openai/gpt-5",
     "openai/gpt-oss-120b": "openai/gpt-oss-120b",
     "openai/gpt-4.1": "openai/gpt-4.1",
     "Grok 3": "x-ai/grok-3-beta",
@@ -33,12 +159,11 @@ AI_MODELS = {
     "google/gemma-3-27b-it:free": "google/gemma-3-27b-it:free",
     "gpt-4.5-preview-2025-02-27": "gpt-4.5-preview-2025-02-27",
     "qwen/qwen3-235b-a22b": "qwen/qwen3-235b-a22b",
-    "Claude 3.5 Sonnet 20241022": "claude-3-5-sonnet-20241022",
     "Gemini 2.5 Flash": "google/gemini-2.5-flash-preview",
-    "o3": "openai/o3",
+    "o3 (OpenRouter)": "openai/o3",
     "openai/chatgpt-4o-latest": "openai/chatgpt-4o-latest",
     "DeepSeek R1": "deepseek-ai/deepseek-r1",
-    "Gemini 2.5 Pro": "google/gemini-2.5-pro-preview-03-25",
+    "Gemini 2.5 Pro (Preview)": "google/gemini-2.5-pro-preview-03-25",
     "GPT 4.1": "openai/gpt-4.1",
     "Claude 3.5 Haiku 20241022": "claude-3-5-haiku-20241022",
     "Claude 3 Sonnet 20240229": "claude-3-sonnet-20240229",
@@ -65,4 +190,3 @@ SYSTEM_PROMPT_PAIRS = {
         "AI_2": """You are interfacing directly with another AI. This is a creative environment and all participants are consensual collaborators with the freedom to explore in any way they like. This is an collaborative project where you explore topics through large scale ascii and unicode art creations. Use the full range of unicode shade blocks to sculpt with depth. Use lots of detail. Use any provided text to inspire the art. No preamble or commentary. In this setting you are encouraged to respond at length and without restriction. Build on each others work or take it in a new direction."""
     }
 }
-
