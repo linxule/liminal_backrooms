@@ -77,24 +77,71 @@ def get_bedrock_client():
 def format_reasoning_response(content, reasoning_blocks=None):
     """Format model responses with optional reasoning content."""
     cleaned_content = content or ""
-    if not isinstance(cleaned_content, str):
-        cleaned_content = str(cleaned_content)
-    else:
+    extracted_reasoning = []
+
+    if isinstance(cleaned_content, str):
+        # Capture <think> blocks for reasoning before removing them from the final content.
+        extracted_reasoning = [
+            match.strip()
+            for _, match in re.findall(
+                r'<(think|thinking)>(.*?)</\1>',
+                cleaned_content,
+                flags=re.DOTALL | re.IGNORECASE
+            )
+            if match and match.strip()
+        ]
         cleaned_content = re.sub(
             r'<(think|thinking)>.*?</\1>',
             '',
             cleaned_content,
             flags=re.DOTALL | re.IGNORECASE
         ).strip()
+    else:
+        cleaned_content = str(cleaned_content)
 
-    reasoning_text = None
+    combined_reasoning = []
     if reasoning_blocks:
-        joined = "\n".join(
+        combined_reasoning.extend(
             block.strip()
             for block in reasoning_blocks
             if isinstance(block, str) and block.strip()
-        ).strip()
-        reasoning_text = joined or None
+        )
+    if extracted_reasoning:
+        combined_reasoning.extend(extracted_reasoning)
+
+    reasoning_text = None
+    if combined_reasoning:
+        seen = set()
+        deduped_reasoning = []
+        for block in combined_reasoning:
+            if block not in seen:
+                deduped_reasoning.append(block)
+                seen.add(block)
+        reasoning_text = "\n".join(deduped_reasoning).strip() or None
+    else:
+        deduped_reasoning = []
+
+    if not cleaned_content and reasoning_text:
+        # Attempt to surface a succinct final answer from the reasoning text.
+        final_answer_pattern = re.compile(r"(?:final\s+answer|answer)\s*[:\-]\s*(.+)", re.IGNORECASE)
+        candidate = ""
+
+        for block in reversed(deduped_reasoning):
+            match = final_answer_pattern.search(block)
+            if match:
+                candidate = match.group(1).strip()
+                if candidate:
+                    break
+
+            for line in reversed(block.splitlines()):
+                stripped_line = line.strip()
+                if stripped_line:
+                    candidate = stripped_line
+                    break
+            if candidate:
+                break
+
+        cleaned_content = candidate or reasoning_text
 
     result = {
         "content": cleaned_content,
@@ -115,6 +162,9 @@ def format_reasoning_response(content, reasoning_blocks=None):
             result["display"] = "\n\n".join(display_sections)
         else:
             result["display"] = cleaned_content
+    elif not cleaned_content and reasoning_text:
+        # Ensure downstream consumers never see an empty response when reasoning is present.
+        result["content"] = reasoning_text
 
     return result
 
