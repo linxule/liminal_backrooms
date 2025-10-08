@@ -22,7 +22,7 @@ AI_MODELS = {
     # Official provider integrations
     "Claude 4.5 Sonnet (Anthropic API)": {
         "provider": "anthropic",
-        "model": "claude-4.5-sonnet",
+        "model": "claude-sonnet-4-5-20250929",
         "source": "official",
         "capabilities": {"reasoning": True, "cot": True},
         "options": {"temperature": 1, "max_tokens": 4000}

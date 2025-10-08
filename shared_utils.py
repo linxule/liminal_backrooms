@@ -985,28 +985,22 @@ def call_gemini_api(prompt, conversation_history, model, system_prompt, options=
         if system_prompt:
             config["system_instruction"] = system_prompt
 
-        # Build generation config
-        generation_config = {}
+        # Build generation config using SDK types
+        from google.genai import types as genai_types
+
+        gen_config_kwargs = {}
         if "temperature" in options:
-            generation_config["temperature"] = options["temperature"]
+            gen_config_kwargs["temperature"] = options["temperature"]
         if "top_p" in options:
-            generation_config["top_p"] = options["top_p"]
+            gen_config_kwargs["top_p"] = options["top_p"]
         if "max_output_tokens" in options:
-            generation_config["max_output_tokens"] = options["max_output_tokens"]
+            gen_config_kwargs["max_output_tokens"] = options["max_output_tokens"]
 
-        # Enable thinking mode for Gemini 2.5 models
+        if gen_config_kwargs:
+            config["generation_config"] = genai_types.GenerationConfig(**gen_config_kwargs)
+
         # NOTE: Thinking config is not yet available in google-genai SDK v0.2.x
-        # Will be enabled when SDK supports it (check for types.ThinkingConfig)
-        # from config import ENABLE_EXTENDED_THINKING, THINKING_BUDGET_TOKENS
-        # if ENABLE_EXTENDED_THINKING and "gemini-2" in model.lower():
-        #     thinking_budget = min(int(THINKING_BUDGET_TOKENS or 4096), 8192)
-        #     config["thinking_config"] = types.ThinkingConfig(
-        #         include_thoughts=True,
-        #         thinking_budget=thinking_budget
-        #     )
-
-        if generation_config:
-            config["generation_config"] = generation_config
+        # Will be enabled when SDK supports types.ThinkingConfig
 
         # Generate content
         response = client.models.generate_content(
