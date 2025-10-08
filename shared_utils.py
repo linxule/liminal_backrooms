@@ -156,8 +156,13 @@ def format_reasoning_response(content, reasoning_blocks=None):
         display_sections = []
         if reasoning_text:
             display_sections.append(f"[Chain of Thought]\n{reasoning_text}")
-        if cleaned_content:
-            display_sections.append(f"[Final Answer]\n{cleaned_content}")
+            # Only add "[Final Answer]" label when there's reasoning to separate it from
+            if cleaned_content:
+                display_sections.append(f"[Final Answer]\n{cleaned_content}")
+        elif cleaned_content:
+            # No reasoning = no label, just show the content
+            display_sections.append(cleaned_content)
+
         if display_sections:
             result["display"] = "\n\n".join(display_sections)
         else:

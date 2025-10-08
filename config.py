@@ -8,7 +8,7 @@ load_dotenv()
 # Runtime configuration
 TURN_DELAY = 2  # Delay between turns (in seconds)
 SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT = True  # Set to True to include Chain of Thought in conversation history
-SHARE_CHAIN_OF_THOUGHT = True  # Set to True to allow AIs to see each other's Chain of Thought
+SHARE_CHAIN_OF_THOUGHT = False  # Set to False so other AI doesn't see reasoning (prevents format mimicking)
 
 # Extended thinking configuration for models that support it (Claude 3.7+, Claude 4+, Gemini 2.5)
 ENABLE_EXTENDED_THINKING = True  # Enable extended thinking/reasoning modes
