@@ -190,3 +190,5 @@ memory/ai-2/*
 *.bkp
 logs/*
 !logs/.gitkeep
+conversation_full.html
+*.html
