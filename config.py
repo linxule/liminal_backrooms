@@ -7,8 +7,12 @@ load_dotenv()
 
 # Runtime configuration
 TURN_DELAY = 2  # Delay between turns (in seconds)
-SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT = False  # Set to True to include Chain of Thought in conversation history
-SHARE_CHAIN_OF_THOUGHT = False  # Set to True to allow AIs to see each other's Chain of Thought
+SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT = True  # Set to True to include Chain of Thought in conversation history
+SHARE_CHAIN_OF_THOUGHT = True  # Set to True to allow AIs to see each other's Chain of Thought
+
+# Extended thinking configuration for models that support it (Claude 3.7+, Claude 4+, Gemini 2.5)
+ENABLE_EXTENDED_THINKING = True  # Enable extended thinking/reasoning modes
+THINKING_BUDGET_TOKENS = 10000  # Max tokens for thinking (Claude: up to 128K, Gemini: up to 8K default)
 
 # Available AI models
 # Note: AWS Bedrock model IDs may vary by region. If a model fails with

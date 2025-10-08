@@ -229,6 +229,9 @@ def call_claude_api(prompt, messages, model_id, system_prompt=None, options=None
     
     url = "https://api.anthropic.com/v1/messages"
     
+    # Import config for extended thinking settings
+    from config import ENABLE_EXTENDED_THINKING, THINKING_BUDGET_TOKENS
+
     # Ensure we have a system prompt
     payload = {
         "model": model_id,
@@ -240,7 +243,14 @@ def call_claude_api(prompt, messages, model_id, system_prompt=None, options=None
         payload["top_p"] = options["top_p"]
     if "stop_sequences" in options:
         payload["stop_sequences"] = options["stop_sequences"]
-    
+
+    # Enable extended thinking for supported models (Claude 3.7+, Claude 4+)
+    if ENABLE_EXTENDED_THINKING and ("claude-3-7" in model_id.lower() or "claude-4" in model_id.lower()):
+        payload["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": THINKING_BUDGET_TOKENS
+        }
+
     # Set system if provided
     if system_prompt:
         payload["system"] = system_prompt
@@ -284,13 +294,30 @@ def call_claude_api(prompt, messages, model_id, system_prompt=None, options=None
         response = requests.post(url, json=payload, headers=headers)
         response.raise_for_status()
         data = response.json()
+
+        # Extract both text and thinking content blocks
+        thinking_blocks = []
+        text_blocks = []
+
         if 'content' in data and len(data['content']) > 0:
             for content_item in data['content']:
-                if content_item.get('type') == 'text':
-                    return content_item.get('text', '')
-            # Fallback if no text type content is found
-            return str(data['content'])
-        return "No content in response"
+                content_type = content_item.get('type')
+                if content_type == 'thinking':
+                    thinking_text = content_item.get('thinking', content_item.get('text', ''))
+                    if thinking_text:
+                        thinking_blocks.append(thinking_text)
+                elif content_type == 'text':
+                    text_blocks.append(content_item.get('text', ''))
+
+        # Combine text blocks
+        final_text = '\n'.join(text_blocks).strip()
+
+        # Use format_reasoning_response to handle thinking + text
+        if thinking_blocks or not final_text:
+            return format_reasoning_response(final_text, thinking_blocks)
+
+        return final_text if final_text else "No content in response"
+
     except Exception as e:
         return f"Error calling Claude API: {str(e)}"
 
@@ -438,21 +465,80 @@ def call_openai_api(prompt, conversation_history, model, system_prompt, options=
             elif isinstance(final_text, str):
                 final_text = final_text.strip()
 
-        if not final_text:
-            output_blocks = response_dict.get("output", [])
-            text_segments = []
-            for block in output_blocks:
-                block_content = block.get("content", [])
-                for content_block in block_content:
-                    block_type = content_block.get("type")
-                    text = content_block.get("text", "")
-                    if not text:
-                        continue
-                    if block_type and "reason" in block_type:
-                        reasoning_blocks.append(text)
-                    else:
-                        text_segments.append(text)
+        output_blocks = response_dict.get("output") or []
+        text_segments = []
 
+        def append_reasoning_text(text):
+            if not text:
+                return
+            cleaned = text.strip()
+            if cleaned:
+                reasoning_blocks.append(cleaned)
+
+        def extract_reasoning(content_block, default_is_reasoning=False):
+            if not isinstance(content_block, dict):
+                if default_is_reasoning and isinstance(content_block, str):
+                    append_reasoning_text(content_block)
+                return
+
+            block_type = (content_block.get("type") or "").lower()
+            text = content_block.get("text")
+            nested = content_block.get("content") if isinstance(content_block, dict) else None
+
+            is_reasoning = default_is_reasoning or any(
+                keyword in block_type
+                for keyword in ("reason", "chain_of_thought", "cot")
+            )
+
+            if is_reasoning and text:
+                append_reasoning_text(text)
+
+            if isinstance(nested, dict):
+                extract_reasoning(nested, default_is_reasoning=is_reasoning)
+            elif isinstance(nested, list):
+                for nested_block in nested:
+                    extract_reasoning(nested_block, default_is_reasoning=is_reasoning)
+
+        # Collect reasoning from explicit reasoning sections if provided
+        reasoning_sections = response_dict.get("reasoning")
+        if reasoning_sections:
+            if isinstance(reasoning_sections, dict):
+                reasoning_iterable = [reasoning_sections]
+            elif isinstance(reasoning_sections, list):
+                reasoning_iterable = reasoning_sections
+            else:
+                reasoning_iterable = []
+            for section in reasoning_iterable:
+                extract_reasoning(section, default_is_reasoning=True)
+
+        if output_blocks:
+            for block in output_blocks:
+                if not isinstance(block, dict):
+                    continue
+                block_type = (block.get("type") or "").lower()
+                block_content = block.get("content") or []
+                if not isinstance(block_content, list):
+                    block_content = [block_content]
+                for content_block in block_content:
+                    if content_block is None:
+                        continue
+                    if isinstance(content_block, dict):
+                        lower_type = (content_block.get("type") or "").lower()
+                        text = content_block.get("text", "")
+                    else:
+                        lower_type = ""
+                        text = str(content_block)
+                    if lower_type and any(keyword in lower_type for keyword in ("reason", "chain_of_thought", "cot")):
+                        append_reasoning_text(text)
+                    elif text:
+                        text_segments.append(text)
+                    extract_reasoning(content_block)
+
+                # Some providers may embed reasoning directly on the block
+                if block_type and any(keyword in block_type for keyword in ("reason", "chain_of_thought", "cot")):
+                    extract_reasoning(block, default_is_reasoning=True)
+
+        if not final_text:
             final_text = "\n".join(text_segments).strip()
 
         if not final_text and reasoning_blocks:
@@ -899,14 +985,23 @@ def call_gemini_api(prompt, conversation_history, model, system_prompt, options=
         if system_prompt:
             config["system_instruction"] = system_prompt
 
-        if any(key in options for key in ("temperature", "top_p", "max_output_tokens")):
-            generation_config = {}
-            if "temperature" in options:
-                generation_config["temperature"] = options["temperature"]
-            if "top_p" in options:
-                generation_config["top_p"] = options["top_p"]
-            if "max_output_tokens" in options:
-                generation_config["max_output_tokens"] = options["max_output_tokens"]
+        # Build generation config
+        generation_config = {}
+        if "temperature" in options:
+            generation_config["temperature"] = options["temperature"]
+        if "top_p" in options:
+            generation_config["top_p"] = options["top_p"]
+        if "max_output_tokens" in options:
+            generation_config["max_output_tokens"] = options["max_output_tokens"]
+
+        # Enable thinking mode for Gemini 2.5 models
+        from config import ENABLE_EXTENDED_THINKING, THINKING_BUDGET_TOKENS
+        if ENABLE_EXTENDED_THINKING and "gemini-2" in model.lower():
+            generation_config["thinking_config"] = {
+                "thinking_budget": THINKING_BUDGET_TOKENS
+            }
+
+        if generation_config:
             config["generation_config"] = generation_config
 
         # Generate content
@@ -916,16 +1011,24 @@ def call_gemini_api(prompt, conversation_history, model, system_prompt, options=
             config=config
         )
 
-        # Extract text from response
-        if hasattr(response, 'text'):
-            content = response.text
-        elif hasattr(response, 'candidates') and response.candidates:
-            parts = response.candidates[0].content.parts
-            content = "".join(part.text for part in parts if hasattr(part, 'text'))
-        else:
-            content = str(response)
+        # Extract text and thinking from response
+        thinking_blocks = []
+        text_content = ""
 
-        return format_reasoning_response(content, [])
+        if hasattr(response, 'text'):
+            text_content = response.text
+        elif hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            # Extract thoughts if available
+            if hasattr(candidate, 'thoughts') and candidate.thoughts:
+                thinking_blocks = [str(thought) for thought in candidate.thoughts]
+            # Extract text content
+            parts = candidate.content.parts
+            text_content = "".join(part.text for part in parts if hasattr(part, 'text'))
+        else:
+            text_content = str(response)
+
+        return format_reasoning_response(text_content, thinking_blocks)
 
     except Exception as exc:
         print(f"Error calling Gemini API with SDK: {exc}")
