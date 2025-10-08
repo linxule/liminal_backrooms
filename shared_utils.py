@@ -562,11 +562,20 @@ def call_deepseek_api(prompt, conversation_history, model, system_prompt, option
         message = choices[0].get("message", {})
         content = message.get("content", "") or ""
 
+        # DeepSeek returns reasoning_content as a string, not an array
+        reasoning_content = message.get("reasoning_content", "")
         reasoning_blocks = []
-        for reasoning_item in message.get("reasoning_content", []):
-            text = reasoning_item.get("text")
-            if text:
-                reasoning_blocks.append(text)
+        if reasoning_content and isinstance(reasoning_content, str):
+            reasoning_blocks.append(reasoning_content)
+        elif isinstance(reasoning_content, list):
+            # Handle array format if API changes in future
+            for reasoning_item in reasoning_content:
+                if isinstance(reasoning_item, str):
+                    reasoning_blocks.append(reasoning_item)
+                elif isinstance(reasoning_item, dict):
+                    text = reasoning_item.get("text")
+                    if text:
+                        reasoning_blocks.append(text)
 
         # DeepSeek may embed <think> tags inside the final content;
         # format_reasoning_response handles stripping when needed.
