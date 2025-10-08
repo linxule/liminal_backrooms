@@ -12,6 +12,12 @@ python-dotenv = "^1.0.0"
 Pillow = "^10.2.0"
 openai = "^1.40.0"
 boto3 = "^1.34.144"
+anthropic = "^0.39.0"
+PyQt6 = "^6.4.0"
+together = "^1.0.0"
+beautifulsoup4 = "^4.12.0"
+google-genai = "^0.2.0"
+networkx = "^3.0"
 
 [tool.pyright]
 # https://github.com/microsoft/pyright/blob/main/docs/configuration.md

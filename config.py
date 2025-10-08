@@ -11,6 +11,9 @@ SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT = False  # Set to True to include Chain of Thou
 SHARE_CHAIN_OF_THOUGHT = False  # Set to True to allow AIs to see each other's Chain of Thought
 
 # Available AI models
+# Note: AWS Bedrock model IDs may vary by region. If a model fails with
+# "on-demand throughput isn't supported", check AWS Bedrock console for
+# regional inference profile IDs (e.g., us.anthropic.claude-*-v2:0)
 AI_MODELS = {
     # Official provider integrations
     "Claude 4.5 Sonnet (Anthropic API)": {

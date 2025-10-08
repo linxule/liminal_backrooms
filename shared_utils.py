@@ -18,6 +18,13 @@ from together import Together
 from typing import Any, Callable, Dict, List, Optional
 
 try:
+    from google import genai
+    GENAI_AVAILABLE = True
+except ImportError:
+    genai = None
+    GENAI_AVAILABLE = False
+
+try:
     import boto3
     from botocore.exceptions import BotoCoreError, ClientError
 except ImportError:  # pragma: no cover - optional dependency
@@ -753,7 +760,81 @@ def call_bigmodel_api(prompt, conversation_history, model, system_prompt, option
 
 
 def call_gemini_api(prompt, conversation_history, model, system_prompt, options=None):
-    """Call Gemini models via Google AI Studio API."""
+    """Call Gemini models via official Google GenAI SDK."""
+    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "Error: GOOGLE_API_KEY (or GEMINI_API_KEY) not found in environment variables"
+
+    if not GENAI_AVAILABLE:
+        print("Warning: google-genai SDK not available, falling back to REST API")
+        return _call_gemini_rest_api(prompt, conversation_history, model, system_prompt, options)
+
+    options = options or {}
+
+    try:
+        # Initialize client with API key
+        client = genai.Client(api_key=api_key)
+
+        # Build conversation history
+        contents = []
+        if conversation_history:
+            for msg in conversation_history:
+                text = msg.get("content")
+                if not text:
+                    continue
+                role = msg.get("role", "user")
+                gemini_role = "user" if role == "user" else "model"
+                contents.append({
+                    "role": gemini_role,
+                    "parts": [{"text": text}]
+                })
+
+        # Add current prompt
+        contents.append({
+            "role": "user",
+            "parts": [{"text": prompt}]
+        })
+
+        # Build config
+        config = {}
+        if system_prompt:
+            config["system_instruction"] = system_prompt
+
+        if any(key in options for key in ("temperature", "top_p", "max_output_tokens")):
+            generation_config = {}
+            if "temperature" in options:
+                generation_config["temperature"] = options["temperature"]
+            if "top_p" in options:
+                generation_config["top_p"] = options["top_p"]
+            if "max_output_tokens" in options:
+                generation_config["max_output_tokens"] = options["max_output_tokens"]
+            config["generation_config"] = generation_config
+
+        # Generate content
+        response = client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config
+        )
+
+        # Extract text from response
+        if hasattr(response, 'text'):
+            content = response.text
+        elif hasattr(response, 'candidates') and response.candidates:
+            parts = response.candidates[0].content.parts
+            content = "".join(part.text for part in parts if hasattr(part, 'text'))
+        else:
+            content = str(response)
+
+        return format_reasoning_response(content, [])
+
+    except Exception as exc:
+        print(f"Error calling Gemini API with SDK: {exc}")
+        return f"Error calling Gemini API: {str(exc)}"
+
+
+def _call_gemini_rest_api(prompt, conversation_history, model, system_prompt, options=None):
+    """Fallback: Call Gemini models via REST API (legacy)."""
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
         return "Error: GOOGLE_API_KEY (or GEMINI_API_KEY) not found in environment variables"
@@ -793,7 +874,7 @@ def call_gemini_api(prompt, conversation_history, model, system_prompt, options=
             generation_config["maxOutputTokens"] = options["max_output_tokens"]
 
     url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent"
         f"?key={api_key}"
     )
 
@@ -816,7 +897,7 @@ def call_gemini_api(prompt, conversation_history, model, system_prompt, options=
         content = "\n".join(text_segments).strip()
         return format_reasoning_response(content, [])
     except Exception as exc:
-        print(f"Error calling Gemini API: {exc}")
+        print(f"Error calling Gemini REST API: {exc}")
         return f"Error calling Gemini API: {str(exc)}"
 
 
