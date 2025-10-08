@@ -140,8 +140,17 @@ def normalize_response(response):
         if content is None and "error" in normalized:
             content = normalized["error"]
             role = "system"
-        if content is None:
-            content = ""
+        if content is None or (isinstance(content, str) and not content.strip()):
+            # If content is empty but we have reasoning, use that instead
+            if normalized.get("reasoning"):
+                content = normalized.get("display") or normalized["reasoning"]
+            else:
+                content = ""
+
+        # If still empty after all checks, flag as error
+        if not content or (isinstance(content, str) and not content.strip()):
+            if not normalized.get("reasoning"):
+                return build_error_response("Provider returned no response")
 
         normalized["role"] = role
         normalized["content"] = content
