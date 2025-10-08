@@ -344,36 +344,67 @@ def call_openai_api(prompt, conversation_history, model, system_prompt, options=
     def to_text_content(text):
         if text is None:
             return ""
+        if isinstance(text, list):
+            return "\n".join(
+                to_text_content(item) if not isinstance(item, str) else item
+                for item in text
+            ).strip()
         if not isinstance(text, str):
             return str(text)
         return text
 
+    def build_content(role, text):
+        stripped = to_text_content(text).strip()
+        if not stripped:
+            return []
+        content_type = "output_text" if role == "assistant" else "input_text"
+        return [{
+            "type": content_type,
+            "text": stripped
+        }]
+
     messages = []
     if system_prompt:
-        messages.append({
-            "role": "system",
-            "content": [{"type": "text", "text": to_text_content(system_prompt)}]
-        })
+        content_blocks = build_content("system", system_prompt)
+        if content_blocks:
+            messages.append({
+                "role": "system",
+                "content": content_blocks
+            })
 
     for msg in conversation_history:
         role = msg.get("role")
         content = msg.get("content")
-        if not content or not role:
+        if not role:
+            continue
+        content_blocks = build_content(role, content)
+        if not content_blocks:
             continue
         messages.append({
             "role": role,
-            "content": [{"type": "text", "text": to_text_content(content)}]
+            "content": content_blocks
         })
 
-    messages.append({
-        "role": "user",
-        "content": [{"type": "text", "text": to_text_content(prompt)}]
-    })
+    user_content_blocks = build_content("user", prompt)
+    if user_content_blocks:
+        messages.append({
+            "role": "user",
+            "content": user_content_blocks
+        })
+    else:
+        # Ensure the input is never empty; fall back to a placeholder prompt.
+        messages.append({
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": "..."
+            }]
+        })
 
     try:
         response_kwargs = {
             "model": model,
-            "messages": messages
+            "input": messages  # Responses API uses 'input' not 'messages'
         }
 
         if "temperature" in options:
