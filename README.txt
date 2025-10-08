@@ -1,6 +1,6 @@
 # liminal_backrooms
 
-A Python-based application that enables dynamic, branching conversations between multiple AI models in a graphical user interface. Allows for looming and rabbitholing by selecting text and right clicking. The system supports various AI models including Claude, DeepSeek, OpenAI, Llama and Flux, allowing them to interact with each other through text and image generation.
+A Python-based application that enables dynamic, branching conversations between multiple AI models in a graphical user interface. Allows for forking and rabbitholing by selecting text and right clicking. The system supports various AI models including Claude, OpenAI, Gemini, Grok etc, allowing them to interact with each other through text and image generation.
 
 Huge thanks to Andy Ayrey and Janus for their endless inspiration.
 
@@ -14,7 +14,7 @@ Huge thanks to Andy Ayrey and Janus for their endless inspiration.
     - Grok (xAI)
     - LLaMA (Meta)
     - Gemini (Google)
-  - Flux (Black Forest Labs via Replicate) for image generation
+  - OpenAI Images (gpt-image-1) for image generation (toggle in GUI)
 
 - Dynamic Conversation Branching:
   - 🕳️ Rabbithole: Explore concepts in depth while retaining full context
@@ -26,9 +26,9 @@ Huge thanks to Andy Ayrey and Janus for their endless inspiration.
   - User can also interject at these points
 
 - Advanced Features:
-  - Chain of Thought reasoning display for DeepSeek models
+  - Chain of Thought reasoning display optional
   - Customizable conversation turns and modes (AI-AI or Human-AI)
-  - Multiple preset system prompt pairs
+  - Preset system prompt pairs
   - Image generation and analysis capabilities
   - Export functionality for conversations and generated images
   - Modern dark-themed GUI interface
@@ -54,9 +54,12 @@ You'll need API keys from the following services to use all features:
    - Endpoint: https://openrouter.ai/api/v1/chat/completions
    - Provides access to: GPT-4, Grok, Qwen, LLaMA, Gemini, and more
 
-3. Replicate (for Flux and DeepSeek R1):
+3. Replicate (for DeepSeek R1; optional):
    - Sign up at: https://replicate.com/
-   - Used for image generation with Flux model
+   - Used for DeepSeek R1 text generation; Flux image generation optional
+
+4. OpenAI Images (required for auto-image generation):
+   - Requires OPENAI_API_KEY for the gpt-image-1 model
 
 ## Installation
 
@@ -85,8 +88,8 @@ poetry install
    ```env
    ANTHROPIC_API_KEY=your_anthropic_api_key
    OPENROUTER_API_KEY=your_openrouter_api_key
-   REPLICATE_API_TOKEN=your_replicate_token
-   OPENAI_API_KEY=your_openai_api_key  # Optional, for direct OpenAI access
+   REPLICATE_API_TOKEN=your_replicate_token (not required)
+   OPENAI_API_KEY=your_openai_api_key  # For image generation (gpt-image-1)
    ```
 
 2. Application Configuration (`config.py`):
@@ -95,9 +98,9 @@ poetry install
    - System prompt pairs in `SYSTEM_PROMPT_PAIRS` dictionary
    - Add new models or prompt pairs by updating these dictionaries
 
-3. Memory System:
-   - Create JSON files in `memory/ai-1` and `memory/ai-2` for conversation memory
-   - Format: `{"memories": [{"human": "prompt", "assistant": "response"}]}`
+3. Memory System (optional):
+   - Place JSON files at `memories/ai-1_memories.json` and `memories/ai-2_memories.json`
+   - Contents should be a JSON array of prior messages (simple strings are fine)
 
 ## Usage
 
@@ -119,14 +122,14 @@ poetry run python main.py
      - 🕳️ Rabbithole: Explore a concept in depth
      - 🔱 Fork: Continue from a specific point
    - Click nodes in the network graph to navigate between branches
-   - Adjust interations and models on the fly without restarting the application
+   - Adjust iterations and models on the fly without restarting the application
    - Drag nodes to organize your conversation map
    - Branches automatically space themselves for clarity
-   - (Branching doesn't work very well with images in the GUI yet. The images disappear butwill still be produced and can be found in the images folder.)
+   - (Branching doesn't work very well with images in the GUI yet. The images disappear but will still be produced and can be found in the images folder.)
 
 4. Special Features:
    - Chain of Thought: DeepSeek models show reasoning process
-   - Image Generation: Flux model creates images from prompts
+   - Image Generation: OpenAI Images (gpt-image-1) creates images from prompts
    - Export: Saves conversations and images with timestamps
 
 ## Troubleshooting
@@ -138,13 +141,13 @@ poetry run python main.py
    - Monitor API response errors in console
 
 2. GUI Issues:
-   - Ensure tkinter is properly installed
+   - Ensure PyQt6 is installed (handled by Poetry install)
    - Check Python version compatibility
    - Verify display resolution settings
 
 3. Memory System:
-   - Ensure memory directories exist
-   - Check JSON file formatting
+   - Ensure memory files exist in `memories/`
+   - Check JSON formatting
    - Monitor file permissions
 
 4. Branching Issues:
@@ -169,7 +172,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Anthropic
 - DeepSeek AI
 - OpenRouter
-- Black Forest Labs' Flux
+- OpenAI
 - Open-source contributors
 - Andy Ayrey and Janus, both huge inspirations for this project
 

@@ -1,1337 +1,2262 @@
-# gui.py
+# new_gui.py
+
+import os
+import json
+import requests
+import threading
+import math
+import random
+from datetime import datetime
+from io import BytesIO
+from PIL import Image
+import time
+from pathlib import Path
+import uuid
+import shutil
+import networkx as nx
+import re
+import sys
+import webbrowser
+from PyQt6.QtCore import Qt, QRect, QTimer, QRectF, QPointF, QSize, pyqtSignal, QEvent, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QFont, QColor, QPainter, QPen, QBrush, QFontDatabase, QTextCursor, QAction, QKeySequence, QTextCharFormat, QLinearGradient, QRadialGradient, QPainterPath, QImage, QPixmap
+from PyQt6.QtWidgets import QWidget, QApplication, QMainWindow, QSplitter, QVBoxLayout, QHBoxLayout, QTextEdit, QFrame, QLineEdit, QPushButton, QLabel, QComboBox, QMenu, QFileDialog, QMessageBox, QScrollArea, QToolTip, QSizePolicy, QCheckBox
 
 from config import (
-    TURN_DELAY,
     AI_MODELS,
     SYSTEM_PROMPT_PAIRS,
     SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT
 )
 
-import os
-from datetime import datetime
-from PIL import Image, ImageEnhance, ImageTk
-import tkinter as tk
-from tkinter import scrolledtext, ttk, filedialog
-import requests
-from io import BytesIO
-import threading
-import shutil
-import math
-import random  # Added import for random angles
+# Add import for the HTML viewing functionality 
+from shared_utils import open_html_in_browser, generate_image_from_text
 
-class NetworkView(tk.Canvas):
-    def __init__(self, master, colors, **kwargs):
-        # Enable DPI awareness
-        self.scaling = self.get_scaling_factor()
-        scaled_kwargs = {k: v * self.scaling if isinstance(v, (int, float)) else v 
-                        for k, v in kwargs.items()}
+# Define global color palette for consistent styling
+COLORS = {
+    'bg_dark': '#1E1E1E',           # Main background
+    'bg_medium': '#252526',         # Widget backgrounds
+    'bg_light': '#2D2D30',          # Lighter elements
+    'accent_blue': '#569CD6',       # Primary accent
+    'accent_blue_hover': '#4E8CC2', # Hover state
+    'accent_blue_active': '#007ACC',# Active state
+    'accent_green': '#B5CEA8',      # Secondary accent (rabbithole)
+    'accent_yellow': '#DCDCAA',     # Tertiary accent (fork)
+    'accent_orange': '#CE9178',     # Quaternary accent
+    'text_normal': '#D4D4D4',       # Normal text
+    'text_dim': '#9CDCFE',          # Dimmed text
+    'text_bright': '#FFFFFF',       # Bright text
+    'text_error': '#F44747',        # Error text
+    'border': '#3E3E42',            # Borders
+    'border_highlight': '#555555',  # Highlighted borders
+    'chain_of_thought': '#608B4E',  # Chain of thought text
+    'user_header': '#4EC9B0',       # User message headers
+    'ai_header': '#569CD6',         # AI message headers
+    'system_message': '#CE9178',    # System messages
+}
+
+# Load custom fonts
+def load_fonts():
+    """Load custom fonts for the application"""
+    font_dir = Path("fonts")
+    font_dir.mkdir(exist_ok=True)
+    
+    # List of fonts to load - these would need to be included with the application
+    fonts = [
+        # ("JetBrainsMono-Regular.ttf", "JetBrains Mono"),
+        # ("Orbitron-Regular.ttf", "Orbitron"),
+    ]
+    
+    loaded_fonts = []
+    for font_file, font_name in fonts:
+        font_path = font_dir / font_file
+        if font_path.exists():
+            font_id = QFontDatabase.addApplicationFont(str(font_path))
+            if font_id >= 0:
+                loaded_fonts.append(font_name)
+    
+    return loaded_fonts
+
+class NetworkGraphWidget(QWidget):
+    nodeSelected = pyqtSignal(str)
+    nodeHovered = pyqtSignal(str)
+    
+    def __init__(self):
+        super().__init__()
         
-        super().__init__(master, **scaled_kwargs)
-        self.colors = colors
-        self.nodes = {}
+        # Graph data
+        self.nodes = []
+        self.edges = []
+        self.node_positions = {}
+        self.node_colors = {}
+        self.node_labels = {}
+        self.node_sizes = {}
+        
+        # Edge animation data
+        self.growing_edges = {}  # Dictionary to track growing edges: {(source, target): growth_progress}
+        self.edge_growth_speed = 0.05  # Increased speed of edge growth animation (was 0.02)
+        
+        # Visual settings
+        self.margin = 50
         self.selected_node = None
-        self.node_radius = 12 * self.scaling  # Reduced base radius
-        self.spacing_x = 80 * self.scaling    # Reduced spacing
-        self.spacing_y = 60 * self.scaling
-        self.padding = 25 * self.scaling
+        self.hovered_node = None
+        self.animation_progress = 0
+        self.animation_timer = QTimer(self)
+        self.animation_timer.timeout.connect(self.update_animation)
+        self.animation_timer.start(50)  # 20 FPS animation
         
-        # Add organic movement
-        self.time = 0
-        self.wave_amplitude = 1.0 * self.scaling
-        self.wave_frequency = 0.05
+        # Mycelial node settings
+        self.hyphae_count = 5  # Number of hyphae per node
+        self.hyphae_length_factor = 0.4  # Length of hyphae relative to node radius
+        self.hyphae_variation = 0.3  # Random variation in hyphae
         
-        # Modern color scheme aligned with main UI
-        self.node_colors = {
-            'main': '#569CD6',      # Soft blue (accent color)
-            'branch': '#D4D4D4',    # Light grey (text color)
-            'loom': '#4E8CC2',      # Darker blue (accent hover)
+        # Node colors - use global color palette with mycelial theme
+        self.node_colors_by_type = {
+            'main': '#8E9DCC',  # Soft blue-purple
+            'rabbithole': '#7FB069',  # Soft green
+            'fork': '#F2C14E',  # Soft yellow
+            'branch': '#F78154'   # Soft orange
         }
         
-        # Add depth tracking
-        self.depth_map = {'main': 0}
+        # Collision dynamics
+        self.node_velocities = {}  # Store velocities for each node
+        self.repulsion_strength = 0.5  # Strength of repulsion between nodes
+        self.attraction_strength = 0.1  # Strength of attraction along edges
+        self.damping = 0.8  # Damping factor to prevent oscillation
+        self.apply_physics = True  # Toggle for physics simulation
         
-        # Bind events
-        self.bind('<Button-1>', self.on_click)
-        self.bind('<B1-Motion>', self.on_drag)
-        self.bind('<ButtonRelease-1>', self.on_release)
-        self.bind('<Configure>', self.on_resize)
+        # Set up the widget
+        self.setMinimumSize(300, 300)
+        self.setMouseTracking(True)
         
-        # Animation
-        self.animation_active = False
-        self.velocity = {}
+    def add_edge(self, source, target):
+        """Add an edge with growth animation"""
+        if (source, target) not in self.edges:
+            self.edges.append((source, target))
+            # Initialize edge growth at 0
+            self.growing_edges[(source, target)] = 0.0
+            # Force update to start animation immediately
+            self.update()
         
-        # Start organic movement
-        self.animate_organic_movement()
+    def update_animation(self):
+        """Update animation state"""
+        self.animation_progress = (self.animation_progress + 0.05) % 1.0
         
-    def get_scaling_factor(self):
-        """Get the DPI scaling factor for the current display"""
-        try:
-            # Try to get system DPI scaling
-            return self.winfo_fpixels('1i') / 72.0
-        except:
-            return 1.5  # Default to 150% scaling if can't detect
+        # Update growing edges
+        edges_to_remove = []
+        has_growing_edges = False
         
-    def animate_organic_movement(self):
-        """Create subtle organic movement in the network"""
-        self.time += 0.1
-        if len(self.nodes) > 0:
-            self.redraw()
-        self.after(50, self.animate_organic_movement)
+        for edge, progress in self.growing_edges.items():
+            if progress < 1.0:
+                self.growing_edges[edge] = min(progress + self.edge_growth_speed, 1.0)
+                has_growing_edges = True
+            else:
+                # Mark fully grown edges for removal from animation tracking
+                edges_to_remove.append(edge)
         
-    def get_organic_offset(self, node_id):
-        """Calculate organic movement offset for a node"""
-        depth = self.depth_map.get(node_id, 0)
-        x_offset = math.sin(self.time * self.wave_frequency + depth) * self.wave_amplitude
-        y_offset = math.cos(self.time * self.wave_frequency + depth) * self.wave_amplitude
-        return x_offset, y_offset
+        # Remove fully grown edges from tracking
+        for edge in edges_to_remove:
+            if edge in self.growing_edges:
+                self.growing_edges.pop(edge)
         
-    def draw_node(self, x, y, node_id, node):
-        """Draw a simplified node with just icon and label"""
-        color = self.node_colors[node['type'] if node['type'] in self.node_colors else 'branch']
-        is_selected = node_id == self.selected_node
+        # Apply collision dynamics if enabled
+        if self.apply_physics and len(self.nodes) > 1:
+            self.apply_collision_dynamics()
         
-        # Icon only - using ⦿ for hole (more centered than 🕳️)
-        icon = '🍄' if node['type'] == 'main' else '🧶' if node['type'] == 'loom' else '⦿'
+        # Update the widget
+        self.update()
+    
+    def apply_collision_dynamics(self):
+        """Apply collision dynamics to prevent node overlap"""
+        # Initialize velocities if needed
+        for node_id in self.nodes:
+            if node_id not in self.node_velocities:
+                self.node_velocities[node_id] = (0, 0)
         
-        # Draw icon
-        self.create_text(
-            x, y,
-            text=icon,
-            font=('Segoe UI', int(12 * self.scaling)),
-            fill=color
-        )
-        
-        # Small label below with bold if selected
-        if node['label']:
-            label = node['label'][:15] + '...' if len(node['label']) > 15 else node['label']
-            self.create_text(
-                x, y + self.node_radius + 5 * self.scaling,
-                text=label,
-                font=('Segoe UI Bold' if is_selected else 'Segoe UI', int(7 * self.scaling)),
-                fill=color
-            )
-            
-    def draw_mycelial_connection(self, start_x, start_y, end_x, end_y, node_type):
-        """Draw a simplified connection line"""
-        # Single clean line with appropriate style
-        self.create_line(
-            start_x, start_y,
-            end_x, end_y,
-            fill=self.node_colors[node_type if node_type in self.node_colors else 'branch'],
-            width=1 * self.scaling,
-            dash=(6, 4) if node_type == 'loom' else None,
-            capstyle=tk.ROUND,
-            joinstyle=tk.ROUND
-        )
-        
-    def redraw(self):
-        self.delete('all')
-        
-        # Draw connections first
-        for node_id, node in self.nodes.items():
-            if node['parent']:
-                parent = self.nodes[node['parent']]
-                # Get organic offsets
-                x_off1, y_off1 = self.get_organic_offset(node_id)
-                x_off2, y_off2 = self.get_organic_offset(node['parent'])
+        # Calculate repulsive forces between nodes
+        new_velocities = {}
+        for node_id in self.nodes:
+            if node_id not in self.node_positions:
+                continue
                 
-                self.draw_mycelial_connection(
-                    node['x'] + x_off1, node['y'] + y_off1,
-                    parent['x'] + x_off2, parent['y'] + y_off2,
-                    node['type']
-                )
+            vx, vy = self.node_velocities.get(node_id, (0, 0))
+            x1, y1 = self.node_positions[node_id]
+            
+            # Apply repulsion between nodes
+            for other_id in self.nodes:
+                if other_id == node_id or other_id not in self.node_positions:
+                    continue
+                    
+                x2, y2 = self.node_positions[other_id]
+                
+                # Calculate distance
+                dx = x1 - x2
+                dy = y1 - y2
+                distance = max(0.1, math.sqrt(dx*dx + dy*dy))  # Avoid division by zero
+                
+                # Get node sizes
+                size1 = math.sqrt(self.node_sizes.get(node_id, 400))
+                size2 = math.sqrt(self.node_sizes.get(other_id, 400))
+                min_distance = (size1 + size2) / 2
+                
+                # Apply repulsive force if nodes are too close
+                if distance < min_distance * 2:
+                    # Normalize direction vector
+                    nx = dx / distance
+                    ny = dy / distance
+                    
+                    # Calculate repulsion strength (stronger when closer)
+                    strength = self.repulsion_strength * (1.0 - distance / (min_distance * 2))
+                    
+                    # Apply force
+                    vx += nx * strength
+                    vy += ny * strength
+            
+            # Apply attraction along edges
+            for edge in self.edges:
+                source, target = edge
+                
+                # Skip edges that are still growing
+                if (source, target) in self.growing_edges and self.growing_edges[(source, target)] < 1.0:
+                    continue
+                
+                if source == node_id and target in self.node_positions:
+                    # This node is the source, attract towards target
+                    x2, y2 = self.node_positions[target]
+                    dx = x2 - x1
+                    dy = y2 - y1
+                    distance = max(0.1, math.sqrt(dx*dx + dy*dy))
+                    
+                    # Normalize and apply attraction
+                    vx += (dx / distance) * self.attraction_strength
+                    vy += (dy / distance) * self.attraction_strength
+                    
+                elif target == node_id and source in self.node_positions:
+                    # This node is the target, attract towards source
+                    x2, y2 = self.node_positions[source]
+                    dx = x2 - x1
+                    dy = y2 - y1
+                    distance = max(0.1, math.sqrt(dx*dx + dy*dy))
+                    
+                    # Normalize and apply attraction
+                    vx += (dx / distance) * self.attraction_strength
+                    vy += (dy / distance) * self.attraction_strength
+            
+            # Apply damping to prevent oscillation
+            vx *= self.damping
+            vy *= self.damping
+            
+            # Store new velocity
+            new_velocities[node_id] = (vx, vy)
+        
+        # Update positions based on velocities
+        for node_id, (vx, vy) in new_velocities.items():
+            if node_id in self.node_positions:
+                # Skip the main node to keep it centered
+                if node_id == 'main':
+                    continue
+                    
+                x, y = self.node_positions[node_id]
+                self.node_positions[node_id] = (x + vx, y + vy)
+        
+        # Update velocities for next frame
+        self.node_velocities = new_velocities
+        
+    def paintEvent(self, event):
+        """Paint the network graph"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Get widget dimensions
+        width = self.width()
+        height = self.height()
+        
+        # Set background with subtle gradient
+        gradient = QLinearGradient(0, 0, 0, height)
+        gradient.setColorAt(0, QColor('#1A1A1E'))  # Dark blue-gray
+        gradient.setColorAt(1, QColor('#0F0F12'))  # Darker at bottom
+        painter.fillRect(0, 0, width, height, gradient)
+        
+        # Draw subtle grid lines
+        painter.setPen(QPen(QColor(COLORS['border']).darker(150), 0.5, Qt.PenStyle.DotLine))
+        grid_size = 40
+        for x in range(0, width, grid_size):
+            painter.drawLine(x, 0, x, height)
+        for y in range(0, height, grid_size):
+            painter.drawLine(0, y, width, y)
+        
+        # Calculate center point and scale factor
+        center_x = width / 2
+        center_y = height / 2
+        scale = min(width, height) / 500
+        
+        # Draw edges first so they appear behind nodes
+        for edge in self.edges:
+            source, target = edge
+            if source in self.node_positions and target in self.node_positions:
+                src_x, src_y = self.node_positions[source]
+                dst_x, dst_y = self.node_positions[target]
+                
+                # Transform coordinates to screen space
+                screen_src_x = center_x + src_x * scale
+                screen_src_y = center_y + src_y * scale
+                screen_dst_x = center_x + dst_x * scale
+                screen_dst_y = center_y + dst_y * scale
+                
+                # Get growth progress for this edge (default to 1.0 if not growing)
+                growth_progress = self.growing_edges.get((source, target), 1.0)
+                
+                # Calculate the actual destination based on growth progress
+                if growth_progress < 1.0:
+                    # Interpolate between source and destination
+                    actual_dst_x = screen_src_x + (screen_dst_x - screen_src_x) * growth_progress
+                    actual_dst_y = screen_src_y + (screen_dst_y - screen_src_y) * growth_progress
+                else:
+                    actual_dst_x = screen_dst_x
+                    actual_dst_y = screen_dst_y
+                
+                # Draw mycelial connection (multiple thin lines with variations)
+                source_color = QColor(self.node_colors.get(source, self.node_colors_by_type['main']))
+                target_color = QColor(self.node_colors.get(target, self.node_colors_by_type['main']))
+                
+                # Number of filaments per connection
+                num_filaments = 3
+                
+                for i in range(num_filaments):
+                    # Create a path with multiple segments for organic look
+                    path = QPainterPath()
+                    path.moveTo(screen_src_x, screen_src_y)
+                    
+                    # Calculate distance between points
+                    distance = math.sqrt((actual_dst_x - screen_src_x)**2 + (actual_dst_y - screen_src_y)**2)
+                    
+                    # Number of segments increases with distance
+                    num_segments = max(3, int(distance / 40))
+                    
+                    # Create intermediate points with slight random variations
+                    prev_x, prev_y = screen_src_x, screen_src_y
+                    
+                    for j in range(1, num_segments):
+                        # Calculate position along the line
+                        ratio = j / num_segments
+                        
+                        # Base position
+                        base_x = screen_src_x + (actual_dst_x - screen_src_x) * ratio
+                        base_y = screen_src_y + (actual_dst_y - screen_src_y) * ratio
+                        
+                        # Add random variation perpendicular to the line
+                        angle = math.atan2(actual_dst_y - screen_src_y, actual_dst_x - screen_src_x) + math.pi/2
+                        variation = (random.random() - 0.5) * 10 * scale
+                        
+                        # Variation decreases near endpoints
+                        endpoint_factor = min(ratio, 1 - ratio) * 4  # Maximum at middle
+                        variation *= endpoint_factor
+                        
+                        # Apply variation
+                        point_x = base_x + variation * math.cos(angle)
+                        point_y = base_y + variation * math.sin(angle)
+                        
+                        # Add point to path
+                        path.lineTo(point_x, point_y)
+                        prev_x, prev_y = point_x, point_y
+                    
+                    # Complete the path to destination
+                    path.lineTo(actual_dst_x, actual_dst_y)
+                    
+                    # Create gradient along the path
+                    gradient = QLinearGradient(screen_src_x, screen_src_y, actual_dst_x, actual_dst_y)
+                    
+                    # Make colors more transparent for mycelial effect
+                    source_color_trans = QColor(source_color)
+                    target_color_trans = QColor(target_color)
+                    
+                    # Vary transparency by filament
+                    alpha = 70 + i * 20
+                    source_color_trans.setAlpha(alpha)
+                    target_color_trans.setAlpha(alpha)
+                    
+                    gradient.setColorAt(0, source_color_trans)
+                    gradient.setColorAt(1, target_color_trans)
+                    
+                    # Animate flow along edge
+                    flow_pos = (self.animation_progress + i * 0.3) % 1.0
+                    flow_color = QColor(255, 255, 255, 100)
+                    gradient.setColorAt(flow_pos, flow_color)
+                    
+                    # Draw the edge with varying thickness
+                    thickness = 1.0 + (i * 0.5)
+                    pen = QPen(QBrush(gradient), thickness)
+                    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                    painter.setPen(pen)
+                    painter.drawPath(path)
+                
+                # Draw small nodes along the path for mycelial effect
+                if growth_progress == 1.0:  # Only for fully grown edges
+                    num_nodes = int(distance / 50)
+                    for j in range(1, num_nodes):
+                        ratio = j / num_nodes
+                        node_x = screen_src_x + (screen_dst_x - screen_src_x) * ratio
+                        node_y = screen_src_y + (screen_dst_y - screen_src_y) * ratio
+                        
+                        # Add small random offset
+                        offset_angle = random.random() * math.pi * 2
+                        offset_dist = random.random() * 5
+                        node_x += math.cos(offset_angle) * offset_dist
+                        node_y += math.sin(offset_angle) * offset_dist
+                        
+                        # Draw small node
+                        node_color = QColor(source_color)
+                        node_color.setAlpha(100)
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(QBrush(node_color))
+                        node_size = 1 + random.random() * 2
+                        painter.drawEllipse(QPointF(node_x, node_y), node_size, node_size)
         
         # Draw nodes
-        for node_id, node in self.nodes.items():
-            x_off, y_off = self.get_organic_offset(node_id)
-            self.draw_node(
-                node['x'] + x_off,
-                node['y'] + y_off,
-                node_id,
-                node
-            )
-
-    def add_node(self, node_id, label, node_type="branch", parent_id=None):
-        if parent_id and parent_id in self.nodes:
-            parent = self.nodes[parent_id]
-            # Use random angle between 0 and 2π (full circle)
-            angle = random.uniform(0, 2 * math.pi)
-            distance = self.spacing_x * 2.0  # Keep the double distance for spacing
-            
-            x = parent['x'] + math.cos(angle) * distance
-            y = parent['y'] + math.sin(angle) * distance
-            
-            # Calculate depth based on parent
-            self.depth_map[node_id] = self.depth_map.get(parent_id, 0) + 1
-        else:
-            # Root node position - center of canvas
-            x = self.winfo_width() / 2
-            y = self.winfo_height() / 2
-            self.depth_map[node_id] = 0
-            
-        self.nodes[node_id] = {
-            'x': x, 'y': y,
-            'label': label,
-            'type': node_type,
-            'parent': parent_id,
-            'children': [],
-            'depth': self.depth_map[node_id]
-        }
-        
-        if parent_id:
-            self.nodes[parent_id]['children'].append(node_id)
-            
-        # Apply stronger initial separation
-        self.apply_initial_separation(node_id)
-        self.start_animation()
-        self.redraw()
-        
-    def apply_initial_separation(self, new_node_id):
-        """Apply stronger initial separation force"""
-        new_node = self.nodes[new_node_id]
-        
-        # Initialize velocity for the new node
-        self.velocity[new_node_id] = {'dx': 0, 'dy': 0}
-        
-        # Apply much stronger initial repulsion
-        for node_id, node in self.nodes.items():
-            if node_id != new_node_id:
-                dx = new_node['x'] - node['x']
-                dy = new_node['y'] - node['y']
-                dist = math.sqrt(dx * dx + dy * dy)
-                if dist < self.spacing_x * 2:  # Increased check distance
-                    # Much stronger initial force
-                    force = 8000 / (dist * dist) if dist > 1 else 8000
-                    self.velocity[new_node_id]['dx'] += (dx / dist) * force
-                    self.velocity[new_node_id]['dy'] += (dy / dist) * force
-        
-        # Apply the initial velocity with larger step
-        new_node['x'] += self.velocity[new_node_id]['dx'] * 0.2  # Increased step size
-        new_node['y'] += self.velocity[new_node_id]['dy'] * 0.2
-        
-    def remove_node(self, node_id):
-        if node_id in self.nodes:
-            node = self.nodes[node_id]
-            if node['parent']:
-                parent = self.nodes[node['parent']]
-                parent['children'].remove(node_id)
-            for child_id in node['children']:
-                self.remove_node(child_id)
-            del self.nodes[node_id]
-            self.redraw()
-            
-    def start_animation(self):
-        if not self.animation_active:
-            self.animation_active = True
-            self.animate()
-            
-    def animate(self):
-        if not self.animation_active:
-            return
-            
-        # Apply force-directed layout
-        self.apply_forces()
-        self.redraw()
-        
-        # Continue animation
-        self.after(16, self.animate)  # ~60 FPS
-        
-    def apply_forces(self):
-        # Initialize velocities
-        self.velocity = {node_id: {'dx': 0, 'dy': 0} for node_id in self.nodes}
-        
-        # Apply repulsive forces between all nodes
-        for n1 in self.nodes:
-            for n2 in self.nodes:
-                if n1 != n2:
-                    self.apply_repulsion(n1, n2)
-                    
-        # Apply attractive forces along edges
-        for node_id, node in self.nodes.items():
-            if node['parent']:
-                self.apply_attraction(node_id, node['parent'])
-                
-        # Update positions with boundary constraints
         for node_id in self.nodes:
-            # Apply velocity
-            self.nodes[node_id]['x'] += self.velocity[node_id]['dx']
-            self.nodes[node_id]['y'] += self.velocity[node_id]['dy']
-            
-            # Constrain to canvas bounds
-            self.nodes[node_id]['x'] = max(self.padding, min(self.winfo_width() - self.padding, self.nodes[node_id]['x']))
-            self.nodes[node_id]['y'] = max(self.padding, min(self.winfo_height() - self.padding, self.nodes[node_id]['y']))
-            
-            # If this is the main node, keep it centered horizontally
-            if node_id == 'main':
-                self.nodes[node_id]['x'] = self.winfo_width() / 2
+            if node_id in self.node_positions:
+                x, y = self.node_positions[node_id]
                 
-    def apply_repulsion(self, n1, n2):
-        node1 = self.nodes[n1]
-        node2 = self.nodes[n2]
-        dx = node1['x'] - node2['x']
-        dy = node1['y'] - node2['y']
-        dist = math.sqrt(dx * dx + dy * dy)
-        if dist < 1: dist = 1
-        
-        # Stronger base repulsion force
-        force = 5000 / (dist * dist)  # Increased from 3000 to 5000
-        
-        # Extra repulsion when nodes are too close
-        if dist < self.spacing_x:
-            force *= 2.0  # Double the force for close nodes
-        
-        # Apply force with dampening based on depth difference
-        depth_diff = abs(self.depth_map[n1] - self.depth_map[n2])
-        force *= max(0.5, 1.0 - (depth_diff * 0.2))
-        
-        self.velocity[n1]['dx'] += (dx / dist) * force
-        self.velocity[n1]['dy'] += (dy / dist) * force
-        self.velocity[n2]['dx'] -= (dx / dist) * force
-        self.velocity[n2]['dy'] -= (dy / dist) * force
-        
-    def apply_attraction(self, n1, n2):
-        node1 = self.nodes[n1]
-        node2 = self.nodes[n2]
-        dx = node2['x'] - node1['x']
-        dy = node2['y'] - node1['y']
-        dist = math.sqrt(dx * dx + dy * dy)
-        if dist < 1: dist = 1
-        
-        force = (dist - self.spacing_x) * 0.05  # Spring force
-        self.velocity[n1]['dx'] += (dx / dist) * force
-        self.velocity[n1]['dy'] += (dy / dist) * force
-        self.velocity[n2]['dx'] -= (dx / dist) * force
-        self.velocity[n2]['dy'] -= (dy / dist) * force
-        
-    def on_click(self, event):
-        self.selected_node = self.find_node_at(event.x, event.y)
-        self.redraw()
-        if self.selected_node:
-            self.event_generate('<<NodeSelected>>')
-            
-    def on_drag(self, event):
-        if self.selected_node:
-            # Constrain dragging within bounds
-            x = max(self.padding, min(event.x, self.winfo_width() - self.padding))
-            y = max(self.padding, min(event.y, self.winfo_height() - self.padding))
-            
-            # Don't allow dragging main node horizontally
-            if self.selected_node == 'main':
-                x = self.winfo_width() / 2
+                # Transform coordinates to screen space
+                screen_x = center_x + x * scale
+                screen_y = center_y + y * scale
                 
-            self.nodes[self.selected_node]['x'] = x
-            self.nodes[self.selected_node]['y'] = y
-            self.redraw()
+                # Get node properties
+                node_color = self.node_colors.get(node_id, self.node_colors_by_type['branch'])
+                node_label = self.node_labels.get(node_id, 'Node')
+                node_size = self.node_sizes.get(node_id, 400)
+                
+                # Scale the node size
+                radius = math.sqrt(node_size) * scale / 2
+                
+                # Adjust radius for hover/selection
+                if node_id == self.selected_node:
+                    radius *= 1.1  # Larger when selected
+                elif node_id == self.hovered_node:
+                    radius *= 1.05  # Slightly larger when hovered
+                
+                # Draw node glow for selected/hovered nodes
+                if node_id == self.selected_node or node_id == self.hovered_node:
+                    glow_radius = radius * 1.5
+                    glow_color = QColor(node_color)
+                    
+                    for i in range(5):
+                        r = glow_radius - (i * radius * 0.1)
+                        alpha = 40 - (i * 8)
+                        glow_color.setAlpha(alpha)
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(glow_color)
+                        painter.drawEllipse(QPointF(screen_x, screen_y), r, r)
+                
+                # Draw mycelial node (irregular shape with hyphae)
+                painter.setPen(Qt.PenStyle.NoPen)
+                
+                # Create gradient fill for node
+                gradient = QRadialGradient(screen_x, screen_y, radius)
+                base_color = QColor(node_color)
+                lighter_color = QColor(node_color).lighter(130)
+                darker_color = QColor(node_color).darker(130)
+                
+                gradient.setColorAt(0, lighter_color)
+                gradient.setColorAt(0.7, base_color)
+                gradient.setColorAt(1, darker_color)
+                
+                # Fill main node body
+                painter.setBrush(QBrush(gradient))
+                
+                # Draw irregular node shape
+                path = QPainterPath()
+                
+                # Create irregular circle with random variations
+                num_points = 20
+                start_angle = random.random() * math.pi * 2
+                
+                for i in range(num_points + 1):
+                    angle = start_angle + (i * 2 * math.pi / num_points)
+                    # Vary radius slightly for organic look
+                    variation = 1.0 + (random.random() - 0.5) * 0.2
+                    point_radius = radius * variation
+                    
+                    x_point = screen_x + math.cos(angle) * point_radius
+                    y_point = screen_y + math.sin(angle) * point_radius
+                    
+                    if i == 0:
+                        path.moveTo(x_point, y_point)
+                    else:
+                        # Use quadratic curves for smoother shape
+                        control_angle = start_angle + ((i - 0.5) * 2 * math.pi / num_points)
+                        control_radius = radius * (1.0 + (random.random() - 0.5) * 0.1)
+                        control_x = screen_x + math.cos(control_angle) * control_radius
+                        control_y = screen_y + math.sin(control_angle) * control_radius
+                        
+                        path.quadTo(control_x, control_y, x_point, y_point)
+                
+                # Draw the main node body
+                painter.drawPath(path)
+                
+                # Draw hyphae (mycelial extensions)
+                hyphae_count = self.hyphae_count
+                if node_id == 'main':
+                    hyphae_count += 3  # More hyphae for main node
+                
+                for i in range(hyphae_count):
+                    # Random angle for hyphae
+                    angle = random.random() * math.pi * 2
+                    
+                    # Base length varies by node type
+                    base_length = radius * self.hyphae_length_factor
+                    if node_id == 'main':
+                        base_length *= 1.5
+                    
+                    # Random variation in length
+                    length = base_length * (1.0 + (random.random() - 0.5) * self.hyphae_variation)
+                    
+                    # Calculate end point
+                    end_x = screen_x + math.cos(angle) * (radius + length)
+                    end_y = screen_y + math.sin(angle) * (radius + length)
+                    
+                    # Start point is on the node perimeter
+                    start_x = screen_x + math.cos(angle) * radius * 0.9
+                    start_y = screen_y + math.sin(angle) * radius * 0.9
+                    
+                    # Create hyphae path with slight curve
+                    hypha_path = QPainterPath()
+                    hypha_path.moveTo(start_x, start_y)
+                    
+                    # Control point for curve
+                    ctrl_angle = angle + (random.random() - 0.5) * 0.5  # Slight angle variation
+                    ctrl_dist = radius + length * 0.5
+                    ctrl_x = screen_x + math.cos(ctrl_angle) * ctrl_dist
+                    ctrl_y = screen_y + math.sin(ctrl_angle) * ctrl_dist
+                    
+                    hypha_path.quadTo(ctrl_x, ctrl_y, end_x, end_y)
+                    
+                    # Draw hypha with gradient
+                    hypha_gradient = QLinearGradient(start_x, start_y, end_x, end_y)
+                    
+                    # Hypha color starts as node color and fades out
+                    hypha_start_color = QColor(node_color)
+                    hypha_end_color = QColor(node_color)
+                    hypha_start_color.setAlpha(150)
+                    hypha_end_color.setAlpha(30)
+                    
+                    hypha_gradient.setColorAt(0, hypha_start_color)
+                    hypha_gradient.setColorAt(1, hypha_end_color)
+                    
+                    # Draw hypha with varying thickness
+                    thickness = 1.0 + random.random() * 1.5
+                    hypha_pen = QPen(QBrush(hypha_gradient), thickness)
+                    hypha_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                    painter.setPen(hypha_pen)
+                    painter.drawPath(hypha_path)
+                    
+                    # Add small nodes at the end of some hyphae
+                    if random.random() > 0.5:
+                        small_node_color = QColor(node_color)
+                        small_node_color.setAlpha(100)
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(QBrush(small_node_color))
+                        small_node_size = 1 + random.random() * 2
+                        painter.drawEllipse(QPointF(end_x, end_y), small_node_size, small_node_size)
+    
+    def draw_arrow_head(self, painter, x1, y1, x2, y2):
+        """Draw an arrow head at the end of a line"""
+        # For mycelial style, we don't need arrow heads
+        pass
+    
+    def mousePressEvent(self, event):
+        """Handle mouse press events"""
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Get click position
+            pos = event.position()
             
-    def on_release(self, event):
-        if self.selected_node:
-            self.start_animation()
-            
-    def on_resize(self, event):
-        # Update main node position on resize
-        if 'main' in self.nodes:
-            self.nodes['main']['x'] = self.winfo_width() / 2
-            self.nodes['main']['y'] = self.winfo_height() / 2
-        self.redraw()
+            # Check if a node was clicked
+            clicked_node = self.get_node_at_position(pos)
+            if clicked_node:
+                self.selected_node = clicked_node
+                self.update()
+                self.nodeSelected.emit(clicked_node)
+    
+    def mouseMoveEvent(self, event):
+        """Handle mouse move events for hover effects"""
+        pos = event.position()
+        hovered_node = self.get_node_at_position(pos)
         
-    def find_node_at(self, x, y):
-        for node_id, node in self.nodes.items():
-            dx = x - node['x']
-            dy = y - node['y']
-            if math.sqrt(dx * dx + dy * dy) <= self.node_radius:
-                return node_id
+        if hovered_node != self.hovered_node:
+            self.hovered_node = hovered_node
+            self.update()
+            if hovered_node:
+                self.nodeHovered.emit(hovered_node)
+                
+                # Show tooltip with node info
+                if hovered_node in self.node_labels:
+                    # Get node type from the ID
+                    node_type = "main"
+                    if "rabbithole_" in hovered_node:
+                        node_type = "rabbithole"
+                    elif "fork_" in hovered_node:
+                        node_type = "fork"
+                    
+                    # Set emoji based on node type
+                    emoji = "🌱"  # Default/main
+                    if node_type == "rabbithole":
+                        emoji = "🕳️"  # Rabbithole emoji
+                    elif node_type == "fork":
+                        emoji = "🔱"  # Fork emoji
+                    
+                    # Show tooltip with emoji and label
+                    QToolTip.showText(
+                        event.globalPosition().toPoint(),
+                        f"{emoji} {self.node_labels[hovered_node]}",
+                        self
+                    )
+    
+    def get_node_at_position(self, pos):
+        """Get the node at the given position"""
+        # Calculate center point and scale factor
+        width = self.width()
+        height = self.height()
+        center_x = width / 2
+        center_y = height / 2
+        scale = min(width, height) / 500
+                    
+        # Check each node
+        for node_id in self.nodes:
+            if node_id in self.node_positions:
+                    x, y = self.node_positions[node_id]
+                    screen_x = center_x + x * scale
+                    screen_y = center_y + y * scale
+                    
+                    # Get node size
+                    node_size = self.node_sizes.get(node_id, 400)
+                    radius = math.sqrt(node_size) * scale / 2
+                    
+            # Check if click is inside the node
+                    distance = math.sqrt((pos.x() - screen_x)**2 + (pos.y() - screen_y)**2)
+                    if distance <= radius:
+                        return node_id
+        
         return None
+    
+    def resizeEvent(self, event):
+        """Handle resize events"""
+        super().resizeEvent(event)
+        self.update()
 
-    def get_node_depth(self, node_id):
-        """Get the depth of a node in the tree"""
-        if node_id not in self.nodes:
-            return 0
-        depth = 0
-        current = node_id
-        while self.nodes[current]['parent']:
-            depth += 1
-            current = self.nodes[current]['parent']
-        return depth
+class NetworkPane(QWidget):
+    nodeSelected = pyqtSignal(str)
+    
+    def __init__(self):
+        super().__init__()
+        
+        # Main layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Title
+        title = QLabel("Propagation Network")
+        title.setStyleSheet("color: #D4D4D4; font-size: 14px; font-weight: bold; font-family: 'Orbitron', sans-serif;")
+        layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        # Network view - set to expand to fill available space
+        self.network_view = NetworkGraphWidget()
+        self.network_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(self.network_view, 1)  # Add stretch factor of 1 to make it expand
+        
+        # Connect signals
+        self.network_view.nodeSelected.connect(self.nodeSelected)
+    
+        # Initialize graph
+        self.graph = nx.DiGraph()
+        self.node_positions = {}
+        self.node_colors = {}
+        self.node_labels = {}
+        self.node_sizes = {}
+        
+        # Add main node
+        self.add_node('main', 'Seed', 'main')
+    
+    def add_node(self, node_id, label, node_type='branch'):
+        """Add a node to the graph"""
+        try:
+            # Add the node to the graph
+            self.graph.add_node(node_id)
+            
+            # Set node properties based on type
+            if node_type == 'main':
+                color = '#569CD6'  # Blue
+                size = 800
+            elif node_type == 'rabbithole':
+                color = '#B5CEA8'  # Green
+                size = 600
+            elif node_type == 'fork':
+                color = '#DCDCAA'  # Yellow
+                size = 600
+            else:
+                color = '#CE9178'  # Orange
+                size = 400
+            
+            # Store node properties
+            self.node_colors[node_id] = color
+            self.node_labels[node_id] = label
+            self.node_sizes[node_id] = size
+            
+            # Calculate position based on existing nodes
+            self.calculate_node_position(node_id, node_type)
+            
+            # Redraw the graph
+            self.update_graph()
+            
+        except Exception as e:
+            print(f"Error adding node: {e}")
+    
+    def add_edge(self, source_id, target_id):
+        """Add an edge between two nodes"""
+        try:
+            # Add the edge to the graph
+            self.graph.add_edge(source_id, target_id)
+            
+            # Redraw the graph
+            self.update_graph()
+            
+        except Exception as e:
+            print(f"Error adding edge: {e}")
+    
+    def calculate_node_position(self, node_id, node_type):
+        """Calculate position for a new node"""
+        # Get number of existing nodes
+        num_nodes = len(self.graph.nodes) - 1  # Exclude the main node
+        
+        if node_type == 'main':
+            # Main node is at center
+            self.node_positions[node_id] = (0, 0)
+        else:
+            # Calculate angle based on node count with better distribution
+            # Use golden ratio to distribute nodes more evenly
+            golden_ratio = 1.618033988749895
+            angle = 2 * math.pi * golden_ratio * num_nodes
+            
+            # Calculate distance from center based on node type and node count
+            # Increase distance as more nodes are added
+            base_distance = 200
+            count_factor = min(1.0, num_nodes / 20)  # Scale up to 20 nodes
+            
+            if node_type == 'rabbithole':
+                distance = base_distance * (1.0 + count_factor * 0.5)
+            elif node_type == 'fork':
+                distance = base_distance * (1.2 + count_factor * 0.5)
+            else:
+                distance = base_distance * (1.4 + count_factor * 0.5)
+            
+            # Calculate position using polar coordinates
+            x = distance * math.cos(angle)
+            y = distance * math.sin(angle)
+            
+            # Add some random offset for natural appearance
+            x += random.uniform(-30, 30)
+            y += random.uniform(-30, 30)
+            
+            # Check for potential overlaps with existing nodes and adjust if needed
+            overlap = True
+            max_attempts = 5
+            attempt = 0
+            
+            while overlap and attempt < max_attempts:
+                overlap = False
+                for existing_id, (ex, ey) in self.node_positions.items():
+                    # Skip comparing with self
+                    if existing_id == node_id:
+                        continue
+                        
+                    # Calculate distance between nodes
+                    dx = x - ex
+                    dy = y - ey
+                    distance = math.sqrt(dx*dx + dy*dy)
+                    
+                    # Get node sizes
+                    new_size = math.sqrt(self.node_sizes.get(node_id, 400))
+                    existing_size = math.sqrt(self.node_sizes.get(existing_id, 400))
+                    min_distance = (new_size + existing_size) / 2
+                    
+                    # If too close, adjust position
+                    if distance < min_distance * 1.5:
+                        overlap = True
+                        # Move away from the overlapping node
+                        angle = math.atan2(dy, dx)
+                        adjustment = min_distance * 1.5 - distance
+                        x += math.cos(angle) * adjustment * 1.2
+                        y += math.sin(angle) * adjustment * 1.2
+                        break
+                
+                attempt += 1
+            
+            # Store the position
+            self.node_positions[node_id] = (x, y)
+    
+    def update_graph(self):
+        """Update the network graph visualization"""
+        if hasattr(self, 'network_view'):
+            # Update the network view with current graph data
+            self.network_view.nodes = list(self.graph.nodes())
+            self.network_view.edges = list(self.graph.edges())
+            self.network_view.node_positions = self.node_positions
+            self.network_view.node_colors = self.node_colors
+            self.network_view.node_labels = self.node_labels
+            self.network_view.node_sizes = self.node_sizes
+            
+            # Redraw
+            self.network_view.update()
 
-class AIGUI:
-    def __init__(self, master):
-        self.master = master
+class ControlPanel(QWidget):
+    """Control panel with mode, model selections, etc."""
+    def __init__(self):
+        super().__init__()
+        
+        # Set up the UI
+        self.setup_ui()
+        
+        # Initialize with models and prompt pairs
+        self.initialize_selectors()
+    
+    def setup_ui(self):
+        """Set up the user interface for the control panel"""
+        # Main layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 10, 0, 0)
+        main_layout.setSpacing(15)
+        
+        # Add a title
+        title = QLabel("Control Panel")
+        title.setStyleSheet(f"""
+            color: {COLORS['text_bright']};
+            font-size: 14px;
+            font-weight: bold;
+            padding-bottom: 5px;
+            border-bottom: 1px solid {COLORS['border']};
+        """)
+        main_layout.addWidget(title)
+        
+        # Create a grid layout for the controls
+        controls_layout = QHBoxLayout()
+        controls_layout.setSpacing(15)
+        
+        # Left column - Mode and iterations
+        left_column = QVBoxLayout()
+        left_column.setSpacing(10)
+        
+        # Mode selection with icon
+        mode_container = QWidget()
+        mode_layout = QVBoxLayout(mode_container)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(5)
+        
+        mode_label = QLabel("Conversation Mode")
+        mode_label.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 12px;")
+        mode_layout.addWidget(mode_label)
+        
+        self.mode_selector = QComboBox()
+        self.mode_selector.addItems(["AI-AI", "Human-AI"])
+        self.mode_selector.setStyleSheet(self.get_combobox_style())
+        mode_layout.addWidget(self.mode_selector)
+        
+        left_column.addWidget(mode_container)
+        
+        # Iterations with slider
+        iterations_container = QWidget()
+        iterations_layout = QVBoxLayout(iterations_container)
+        iterations_layout.setContentsMargins(0, 0, 0, 0)
+        iterations_layout.setSpacing(5)
+        
+        iterations_label = QLabel("Iterations")
+        iterations_label.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 12px;")
+        iterations_layout.addWidget(iterations_label)
+        
+        self.iterations_selector = QComboBox()
+        self.iterations_selector.addItems(["1", "2", "4", "6", "12", "100"])
+        self.iterations_selector.setStyleSheet(self.get_combobox_style())
+        iterations_layout.addWidget(self.iterations_selector)
+        
+        left_column.addWidget(iterations_container)
+        
+        # Middle column - AI models
+        middle_column = QVBoxLayout()
+        middle_column.setSpacing(10)
+        
+        # AI-1 Model selection
+        ai1_container = QWidget()
+        ai1_layout = QVBoxLayout(ai1_container)
+        ai1_layout.setContentsMargins(0, 0, 0, 0)
+        ai1_layout.setSpacing(5)
+        
+        ai1_label = QLabel("AI-1 Model")
+        ai1_label.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 12px;")
+        ai1_layout.addWidget(ai1_label)
+        
+        self.ai1_model_selector = QComboBox()
+        self.ai1_model_selector.setStyleSheet(self.get_combobox_style())
+        ai1_layout.addWidget(self.ai1_model_selector)
+        
+        middle_column.addWidget(ai1_container)
+        
+        # AI-2 Model selection
+        ai2_container = QWidget()
+        ai2_layout = QVBoxLayout(ai2_container)
+        ai2_layout.setContentsMargins(0, 0, 0, 0)
+        ai2_layout.setSpacing(5)
+        
+        ai2_label = QLabel("AI-2 Model")
+        ai2_label.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 12px;")
+        ai2_layout.addWidget(ai2_label)
+        
+        self.ai2_model_selector = QComboBox()
+        self.ai2_model_selector.setStyleSheet(self.get_combobox_style())
+        ai2_layout.addWidget(self.ai2_model_selector)
+        
+        middle_column.addWidget(ai2_container)
+        
+        # Right column - Prompt pair and export
+        right_column = QVBoxLayout()
+        right_column.setSpacing(10)
+        
+        # Prompt pair selection
+        prompt_container = QWidget()
+        prompt_layout = QVBoxLayout(prompt_container)
+        prompt_layout.setContentsMargins(0, 0, 0, 0)
+        prompt_layout.setSpacing(5)
+        
+        prompt_label = QLabel("Conversation Scenario")
+        prompt_label.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 12px;")
+        prompt_layout.addWidget(prompt_label)
+        
+        self.prompt_pair_selector = QComboBox()
+        self.prompt_pair_selector.setStyleSheet(self.get_combobox_style())
+        prompt_layout.addWidget(self.prompt_pair_selector)
+        
+        right_column.addWidget(prompt_container)
+        
+        # Action buttons container
+        action_container = QWidget()
+        action_layout = QVBoxLayout(action_container)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(5)
+        
+        action_label = QLabel("Actions")
+        action_label.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 12px;")
+        action_layout.addWidget(action_label)
+        
+        # Auto-generate images checkbox
+        self.auto_image_checkbox = QCheckBox("Auto-generate images")
+        self.auto_image_checkbox.setStyleSheet(f"""
+            QCheckBox {{
+                color: {COLORS['text_normal']};
+                spacing: 5px;
+            }}
+            QCheckBox::indicator {{
+                width: 16px;
+                height: 16px;
+                border: 1px solid {COLORS['border']};
+                border-radius: 3px;
+                background-color: {COLORS['bg_light']};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {COLORS['accent_blue']};
+                border: 1px solid {COLORS['accent_blue']};
+            }}
+        """)
+        self.auto_image_checkbox.setToolTip("Automatically generate images from AI responses using OpenAI's GPT-image-1 model")
+        action_layout.addWidget(self.auto_image_checkbox)
+        
+        # Removed: HTML contributions checkbox
+        
+        # Buttons layout (horizontal)
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(5)
+        
+        # Export button
+        self.export_button = QPushButton("Export")
+        self.export_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['bg_light']};
+                color: {COLORS['text_normal']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 8px 15px;
+                font-weight: bold;
+                text-align: center;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['border']};
+                border: 1px solid {COLORS['border_highlight']};
+            }}
+            QPushButton:pressed {{
+                background-color: {COLORS['border_highlight']};
+            }}
+        """)
+        
+        # View HTML button (removed)
+        self.view_html_button = QPushButton("View HTML")
+        self.view_html_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['accent_green']};
+                color: {COLORS['bg_dark']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 8px 15px;
+                font-weight: bold;
+                text-align: center;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['accent_blue']};
+                color: {COLORS['text_bright']};
+                border: 1px solid {COLORS['border_highlight']};
+            }}
+            QPushButton:pressed {{
+                background-color: {COLORS['accent_blue_active']};
+            }}
+        """)
+        self.view_html_button.clicked.connect(lambda: open_html_in_browser("shared_document.html"))
+        
+        # View Full HTML button
+        self.view_full_html_button = QPushButton("View Dark HTML")
+        self.view_full_html_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #212121;
+                color: #789922;
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 8px 15px;
+                font-weight: bold;
+                text-align: center;
+            }}
+            QPushButton:hover {{
+                background-color: #2d2d2d;
+                color: #98c379;
+                border: 1px solid #555;
+            }}
+            QPushButton:pressed {{
+                background-color: #1a1a1a;
+            }}
+        """)
+        self.view_full_html_button.setToolTip("View the full conversation in dark mode with greentext styling")
+        self.view_full_html_button.clicked.connect(lambda: open_html_in_browser("conversation_full.html"))
+        
+        # Removed: View Living Document button
+        
+        # Add buttons to layout
+        buttons_layout.addWidget(self.export_button)
+        buttons_layout.addWidget(self.view_html_button)
+        buttons_layout.addWidget(self.view_full_html_button)
+        # Removed: living doc button from layout
+        
+        action_layout.addLayout(buttons_layout)
+        
+        right_column.addWidget(action_container)
+        
+        # Add columns to the controls layout
+        controls_layout.addLayout(left_column, 1)
+        controls_layout.addLayout(middle_column, 1)
+        controls_layout.addLayout(right_column, 1)
+        
+        # Add controls layout to main layout
+        main_layout.addLayout(controls_layout)
+    
+    def get_combobox_style(self):
+        """Get the style for comboboxes"""
+        return f"""
+            QComboBox {{
+                background-color: {COLORS['bg_light']};
+                color: {COLORS['text_normal']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 5px 10px;
+                min-width: 150px;
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left: 1px solid {COLORS['border']};
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+            }}
+            QComboBox::down-arrow {{
+                width: 12px;
+                height: 12px;
+                image: none;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {COLORS['bg_medium']};
+                color: {COLORS['text_normal']};
+                selection-background-color: {COLORS['accent_blue']};
+                selection-color: {COLORS['text_bright']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 0px;
+            }}
+        """
+    
+    def initialize_selectors(self):
+        """Initialize the selector dropdowns with values from config"""
+        # Add AI models
+        self.ai1_model_selector.clear()
+        self.ai2_model_selector.clear()
+        self.ai1_model_selector.addItems(list(AI_MODELS.keys()))
+        self.ai2_model_selector.addItems(list(AI_MODELS.keys()))
+        
+        # Add prompt pairs
+        self.prompt_pair_selector.clear()
+        self.prompt_pair_selector.addItems(list(SYSTEM_PROMPT_PAIRS.keys()))
+
+class ConversationContextMenu(QMenu):
+    """Context menu for the conversation display"""
+    rabbitholeSelected = pyqtSignal()
+    forkSelected = pyqtSignal()
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # Create actions
+        self.rabbithole_action = QAction("🕳️ Rabbithole", self)
+        self.fork_action = QAction("🔱 Fork", self)
+        
+        # Add actions to menu
+        self.addAction(self.rabbithole_action)
+        self.addAction(self.fork_action)
+        
+        # Connect actions to signals
+        self.rabbithole_action.triggered.connect(self.on_rabbithole_selected)
+        self.fork_action.triggered.connect(self.on_fork_selected)
+        
+        # Apply styling
+        self.setStyleSheet("""
+            QMenu {
+                background-color: #2D2D30;
+                color: #D4D4D4;
+                border: 1px solid #3E3E42;
+            }
+            QMenu::item {
+                padding: 5px 20px 5px 20px;
+            }
+            QMenu::item:selected {
+                background-color: #3E3E42;
+            }
+        """)
+    
+    def on_rabbithole_selected(self):
+        """Signal that rabbithole action was selected"""
+        if self.parent() and hasattr(self.parent(), 'rabbithole_from_selection'):
+            cursor = self.parent().conversation_display.textCursor()
+            selected_text = cursor.selectedText()
+            if selected_text and hasattr(self.parent(), 'rabbithole_callback'):
+                self.parent().rabbithole_callback(selected_text)
+    
+    def on_fork_selected(self):
+        """Signal that fork action was selected"""
+        if self.parent() and hasattr(self.parent(), 'fork_from_selection'):
+            cursor = self.parent().conversation_display.textCursor()
+            selected_text = cursor.selectedText()
+            if selected_text and hasattr(self.parent(), 'fork_callback'):
+                self.parent().fork_callback(selected_text)
+
+class ConversationPane(QWidget):
+    """Left pane containing the conversation and input area"""
+    def __init__(self):
+        super().__init__()
+        
+        # Set up the UI
+        self.setup_ui()
+        
+        # Connect signals and slots
+        self.connect_signals()
+        
+        # Initialize state
+        self.conversation = []
+        self.input_callback = None
+        self.rabbithole_callback = None
+        self.fork_callback = None
+        self.loading = False
+        self.loading_dots = 0
+        self.loading_timer = QTimer()
+        self.loading_timer.timeout.connect(self.update_loading_animation)
+        self.loading_timer.setInterval(300)  # Update every 300ms for smoother animation
+        
+        # Context menu
+        self.context_menu = ConversationContextMenu(self)
+        
+        # Initialize with empty conversation
+        self.update_conversation([])
+        
+        # Images list - to prevent garbage collection
+        self.images = []
+        self.image_paths = []
+
+        # Create text formats with different colors
+        self.text_formats = {
+            "user": QTextCharFormat(),
+            "ai": QTextCharFormat(),
+            "system": QTextCharFormat(),
+            "ai_label": QTextCharFormat(),
+            "normal": QTextCharFormat(),
+            "error": QTextCharFormat()
+        }
+
+        # Configure text formats using global color palette
+        self.text_formats["user"].setForeground(QColor(COLORS['text_normal']))
+        self.text_formats["ai"].setForeground(QColor(COLORS['text_normal']))
+        self.text_formats["system"].setForeground(QColor(COLORS['text_normal']))
+        self.text_formats["ai_label"].setForeground(QColor(COLORS['accent_blue']))
+        self.text_formats["normal"].setForeground(QColor(COLORS['text_normal']))
+        self.text_formats["error"].setForeground(QColor(COLORS['text_error']))
+        
+        # Make AI labels bold
+        self.text_formats["ai_label"].setFontWeight(QFont.Weight.Bold)
+    
+    def setup_ui(self):
+        """Set up the user interface for the conversation pane"""
+        # Main layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(5)  # Reduced spacing
+        
+        # Title and info area
+        title_layout = QHBoxLayout()
+        self.title_label = QLabel("Liminal Backrooms")
+        self.title_label.setStyleSheet(f"""
+            color: {COLORS['text_bright']};
+            font-size: 14px;
+            font-weight: bold;
+            padding: 2px;
+        """)
+        
+        self.info_label = QLabel("AI-to-AI conversation")
+        self.info_label.setStyleSheet(f"""
+            color: {COLORS['text_dim']};
+            font-size: 11px;
+            padding: 2px;
+        """)
+        
+        title_layout.addWidget(self.title_label)
+        title_layout.addStretch()
+        title_layout.addWidget(self.info_label)
+        
+        layout.addLayout(title_layout)
+        
+        # Conversation display (read-only text edit in a scroll area)
+        self.conversation_display = QTextEdit()
+        self.conversation_display.setReadOnly(True)
+        self.conversation_display.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.conversation_display.customContextMenuRequested.connect(self.show_context_menu)
+        
+        # Set font for conversation display
+        font = QFont("Segoe UI", 10)
+        self.conversation_display.setFont(font)
+        
+        # Apply modern styling
+        self.conversation_display.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {COLORS['bg_medium']};
+                color: {COLORS['text_normal']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 10px;
+                selection-background-color: {COLORS['accent_blue']};
+                selection-color: {COLORS['text_bright']};
+            }}
+            QScrollBar:vertical {{
+                background: {COLORS['bg_medium']};
+                width: 12px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {COLORS['border']};
+                min-height: 20px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {COLORS['border_highlight']};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+        """)
+        
+        # Input area with label
+        input_container = QWidget()
+        input_layout = QVBoxLayout(input_container)
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.setSpacing(2)  # Reduced spacing
+        
+        input_label = QLabel("Your message:")
+        input_label.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 11px;")
+        input_layout.addWidget(input_label)
+        
+        # Input field with modern styling
+        self.input_field = QTextEdit()
+        self.input_field.setPlaceholderText("Seed the conversation or just click propagate...")
+        self.input_field.setMaximumHeight(60)  # Reduced height
+        self.input_field.setFont(font)
+        self.input_field.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {COLORS['bg_light']};
+                color: {COLORS['text_normal']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 8px;
+                selection-background-color: {COLORS['accent_blue']};
+                selection-color: {COLORS['text_bright']};
+            }}
+        """)
+        input_layout.addWidget(self.input_field)
+        
+        # Button container for better layout
+        button_container = QWidget()
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(5)  # Reduced spacing
+        
+        # Clear button
+        self.clear_button = QPushButton("Clear")
+        self.clear_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['bg_light']};
+                color: {COLORS['text_normal']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-weight: bold;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['border']};
+                border: 1px solid {COLORS['border_highlight']};
+            }}
+            QPushButton:pressed {{
+                background-color: {COLORS['border_highlight']};
+            }}
+        """)
+        
+        # Submit button with modern styling
+        self.submit_button = QPushButton("Propagate")
+        self.submit_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['accent_blue']};
+                color: {COLORS['text_bright']};
+                border: none;
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-weight: bold;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['accent_blue_hover']};
+            }}
+            QPushButton:pressed {{
+                background-color: {COLORS['accent_blue_active']};
+            }}
+            QPushButton:disabled {{
+                background-color: {COLORS['border']};
+                color: {COLORS['text_dim']};
+            }}
+        """)
+        
+        # Add buttons to layout
+        button_layout.addWidget(self.clear_button)
+        button_layout.addStretch()
+        button_layout.addWidget(self.submit_button)
+        
+        # Add input container to main layout
+        input_layout.addWidget(button_container)
+        
+        # Control panel (buttons for various actions)
+        self.control_panel = ControlPanel()
+        
+        # Add widgets to layout with adjusted stretch factors
+        layout.addWidget(self.conversation_display, 1)  # Main conversation area gets most space
+        layout.addWidget(input_container, 0)  # Input area gets minimal space
+        layout.addWidget(self.control_panel, 0)  # Control panel gets minimal space
+    
+    def connect_signals(self):
+        """Connect signals and slots"""
+        # Submit button
+        self.submit_button.clicked.connect(self.handle_propagate_click)
+        
+        # Clear button
+        self.clear_button.clicked.connect(self.clear_input)
+        
+        # Enter key in input field
+        self.input_field.installEventFilter(self)
+    
+    def clear_input(self):
+        """Clear the input field"""
+        self.input_field.clear()
+        self.input_field.setFocus()
+    
+    def eventFilter(self, obj, event):
+        """Filter events to handle Enter key in input field"""
+        if obj is self.input_field and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Return and not event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self.handle_propagate_click()
+                return True
+        return super().eventFilter(obj, event)
+    
+    def handle_propagate_click(self):
+        """Handle click on the propagate button"""
+        # Get the input text (might be empty)
+        input_text = self.input_field.toPlainText().strip()
+        
+        # Clear the input box
+        self.input_field.clear()
+        
+        # Always call the input callback, even with empty input
+        if hasattr(self, 'input_callback') and self.input_callback:
+            self.input_callback(input_text)
+        
+        # Start loading animation
+        self.start_loading()
+    
+    def set_input_callback(self, callback):
+        """Set callback function for input submission"""
+        self.input_callback = callback
+    
+    def set_rabbithole_callback(self, callback):
+        """Set callback function for rabbithole creation"""
+        self.rabbithole_callback = callback
+    
+    def set_fork_callback(self, callback):
+        """Set callback function for fork creation"""
+        self.fork_callback = callback
+    
+    def update_conversation(self, conversation):
+        """Update conversation display"""
+        self.conversation = conversation
+        self.render_conversation()
+    
+    def render_conversation(self):
+        """Render conversation in the display"""
+        # Clear display
+        self.conversation_display.clear()
+        
+        # Create HTML for conversation with modern styling
+        html = "<style>"
+        html += f"body {{ font-family: 'Segoe UI', sans-serif; font-size: 10pt; line-height: 1.4; }}"
+        html += f".message {{ margin-bottom: 10px; padding: 8px; border-radius: 4px; }}"
+        html += f".user {{ background-color: {COLORS['bg_medium']}; }}"
+        html += f".assistant {{ background-color: {COLORS['bg_medium']}; }}"
+        html += f".system {{ background-color: {COLORS['bg_medium']}; font-style: italic; }}"
+        html += f".header {{ font-weight: bold; margin: 10px 0; color: {COLORS['accent_blue']}; }}"
+        html += f".content {{ white-space: pre-wrap; color: {COLORS['text_normal']}; }}"
+        html += f".branch-indicator {{ color: {COLORS['text_dim']}; font-style: italic; text-align: center; margin: 8px 0; }}"
+        html += f".rabbithole {{ color: {COLORS['accent_green']}; }}"
+        html += f".fork {{ color: {COLORS['accent_yellow']}; }}"
+        # Removed HTML contribution styling
+        html += f"pre {{ background-color: {COLORS['bg_dark']}; border: 1px solid {COLORS['border']}; border-radius: 3px; padding: 8px; overflow-x: auto; margin: 8px 0; }}"
+        html += f"code {{ font-family: 'Consolas', 'Courier New', monospace; color: {COLORS['text_bright']}; }}"
+        html += "</style>"
+        
+        for i, message in enumerate(self.conversation):
+            role = message.get("role", "")
+            content = message.get("content", "")
+            ai_name = message.get("ai_name", "")
+            model = message.get("model", "")
+            
+            # Skip empty messages
+            if not content:
+                continue
+                
+            # Handle branch indicators with special styling
+            if role == 'system' and message.get('_type') == 'branch_indicator':
+                if "Rabbitholing down:" in content:
+                    html += f'<div class="branch-indicator rabbithole">{content}</div>'
+                elif "Forking off:" in content:
+                    html += f'<div class="branch-indicator fork">{content}</div>'
+                continue
+            
+            # Removed HTML contribution indicator logic
+            
+            # Process content to handle code blocks
+            processed_content = self.process_content_with_code_blocks(content)
+            
+            # Format based on role
+            if role == 'user':
+                # User message
+                html += f'<div class="message user">'
+                html += f'<div class="content">{processed_content}</div>'
+                html += f'</div>'
+            elif role == 'assistant':
+                # AI message
+                display_name = ai_name
+                if model:
+                    display_name += f" ({model})"
+                html += f'<div class="message assistant">'
+                html += f'<div class="header">\n{display_name}\n</div>'
+                html += f'<div class="content">{processed_content}</div>'
+                
+                # Removed HTML contribution indicator
+                
+                html += f'</div>'
+            elif role == 'system':
+                # System message
+                html += f'<div class="message system">'
+                html += f'<div class="content">{processed_content}</div>'
+                html += f'</div>'
+        
+        # Set HTML in display
+        self.conversation_display.setHtml(html)
+        
+        # Scroll to bottom
+        self.conversation_display.verticalScrollBar().setValue(
+            self.conversation_display.verticalScrollBar().maximum()
+        )
+    
+    def process_content_with_code_blocks(self, content):
+        """Process content to properly format code blocks"""
+        import re
+        from html import escape
+        
+        # First, escape HTML in the content
+        escaped_content = escape(content)
+        
+        # Check if there are any code blocks in the content
+        if "```" not in escaped_content:
+            return escaped_content
+        
+        # Split the content by code block markers
+        parts = re.split(r'(```(?:[a-zA-Z0-9_]*)\n.*?```)', escaped_content, flags=re.DOTALL)
+        
+        result = []
+        for part in parts:
+            if part.startswith("```") and part.endswith("```"):
+                # This is a code block
+                try:
+                    # Extract language if specified
+                    language_match = re.match(r'```([a-zA-Z0-9_]*)\n', part)
+                    language = language_match.group(1) if language_match else ""
+                    
+                    # Extract code content
+                    code_content = part[part.find('\n')+1:part.rfind('```')]
+                    
+                    # Format as HTML
+                    formatted_code = f'<pre><code class="language-{language}">{code_content}</code></pre>'
+                    result.append(formatted_code)
+                except Exception as e:
+                    # If there's an error, just add the original escaped content
+                    print(f"Error processing code block: {e}")
+                    result.append(part)
+            else:
+                # Process inline code in non-code-block parts
+                inline_parts = re.split(r'(`[^`]+`)', part)
+                processed_part = []
+                
+                for inline_part in inline_parts:
+                    if inline_part.startswith("`") and inline_part.endswith("`") and len(inline_part) > 2:
+                        # This is inline code
+                        code = inline_part[1:-1]
+                        processed_part.append(f'<code>{code}</code>')
+                    else:
+                        processed_part.append(inline_part)
+                
+                result.append(''.join(processed_part))
+        
+        return ''.join(result)
+    
+    def start_loading(self):
+        """Start loading animation"""
+        self.loading = True
+        self.loading_dots = 0
+        self.input_field.setEnabled(False)
+        self.submit_button.setEnabled(False)
+        self.submit_button.setText("Processing")
+        self.loading_timer.start()
+        
+        # Add subtle pulsing animation to the button
+        self.pulse_animation = QPropertyAnimation(self.submit_button, b"styleSheet")
+        self.pulse_animation.setDuration(1000)
+        self.pulse_animation.setLoopCount(-1)  # Infinite loop
+        
+        # Define keyframes for the animation
+        normal_style = f"""
+            QPushButton {{
+                background-color: {COLORS['border']};
+                color: {COLORS['text_dim']};
+                border: none;
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-weight: bold;
+                font-size: 11px;
+            }}
+        """
+        
+        pulse_style = f"""
+            QPushButton {{
+                background-color: {COLORS['border_highlight']};
+                color: {COLORS['text_dim']};
+                border: none;
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-weight: bold;
+                font-size: 11px;
+            }}
+        """
+        
+        self.pulse_animation.setStartValue(normal_style)
+        self.pulse_animation.setEndValue(pulse_style)
+        self.pulse_animation.start()
+    
+    def stop_loading(self):
+        """Stop loading animation"""
+        self.loading = False
+        self.loading_timer.stop()
+        self.input_field.setEnabled(True)
+        self.submit_button.setEnabled(True)
+        self.submit_button.setText("Propagate")
+        
+        # Stop the pulsing animation
+        if hasattr(self, 'pulse_animation'):
+            self.pulse_animation.stop()
+            
+        # Reset button style
+        self.submit_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['accent_blue']};
+                color: {COLORS['text_bright']};
+                border: none;
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-weight: bold;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['accent_blue_hover']};
+            }}
+            QPushButton:pressed {{
+                background-color: {COLORS['accent_blue_active']};
+            }}
+        """)
+    
+    def update_loading_animation(self):
+        """Update loading animation dots"""
+        self.loading_dots = (self.loading_dots + 1) % 4
+        dots = "." * self.loading_dots
+        self.submit_button.setText(f"Processing{dots}")
+    
+    def show_context_menu(self, position):
+        """Show context menu at the given position"""
+        # Get selected text
+        cursor = self.conversation_display.textCursor()
+        selected_text = cursor.selectedText()
+        
+        # Only show context menu if text is selected
+        if selected_text:
+            # Show the context menu at cursor position
+            self.context_menu.exec(self.conversation_display.mapToGlobal(position))
+    
+    def rabbithole_from_selection(self):
+        """Create a rabbithole branch from selected text"""
+        cursor = self.conversation_display.textCursor()
+        selected_text = cursor.selectedText()
+        
+        if selected_text and hasattr(self, 'rabbithole_callback'):
+            self.rabbithole_callback(selected_text)
+    
+    def fork_from_selection(self):
+        """Create a fork branch from selected text"""
+        cursor = self.conversation_display.textCursor()
+        selected_text = cursor.selectedText()
+        
+        if selected_text and hasattr(self, 'fork_callback'):
+            self.fork_callback(selected_text)
+    
+    def append_text(self, text, format_type="normal"):
+        """Append text to the conversation display with the specified format"""
+        cursor = self.conversation_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        
+        # Apply the format if specified
+        if format_type in self.text_formats:
+            self.conversation_display.setCurrentCharFormat(self.text_formats[format_type])
+        
+        # Insert the text
+        cursor.insertText(text)
+        
+        # Reset to normal format after insertion
+        if format_type != "normal":
+            self.conversation_display.setCurrentCharFormat(self.text_formats["normal"])
+        
+        # Scroll to bottom
+        self.conversation_display.setTextCursor(cursor)
+        self.conversation_display.ensureCursorVisible()
+    
+    def clear_conversation(self):
+        """Clear the conversation display"""
+        self.conversation_display.clear()
+        self.images = []
+        
+    def display_conversation(self, conversation, branch_data=None):
+        """Display the conversation in the text edit widget"""
+        # Clear the current text
+        self.conversation_display.clear()
+        
+        # Store conversation data
+        self.conversation = conversation
+        
+        # Check if we're in a branch
+        is_branch = branch_data is not None
+        branch_type = branch_data.get('type', '') if is_branch else ''
+        selected_text = branch_data.get('selected_text', '') if is_branch else ''
+        
+        # Update title if in a branch
+        if is_branch:
+            branch_emoji = "🐇" if branch_type == "rabbithole" else "🍴"
+            self.title_label.setText(f"{branch_emoji} {branch_type.capitalize()}: {selected_text[:30]}...")
+            self.info_label.setText(f"Branch conversation")
+        else:
+            self.title_label.setText("Liminal Backrooms")
+            self.info_label.setText("AI-to-AI conversation")
+        
+        # Debug: Print conversation to console
+        print("\n--- DEBUG: Conversation Content ---")
+        for msg in conversation:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if "```" in content:
+                print(f"Found code block in {role} message")
+                print(f"Content snippet: {content[:100]}...")
+        print("--- End Debug ---\n")
+        
+        # Render conversation
+        self.render_conversation()
+        
+    def display_image(self, image_path):
+        """Display an image in the conversation"""
+        try:
+            # Check if the image path is valid
+            if not image_path or not os.path.exists(image_path):
+                self.append_text("[Image not found]\n", "error")
+                return
+            
+            # Load the image
+            image = QImage(image_path)
+            if image.isNull():
+                self.append_text("[Invalid image format]\n", "error")
+                return
+            
+            # Create a pixmap from the image
+            pixmap = QPixmap.fromImage(image)
+            
+            # Scale the image to fit the conversation display
+            max_width = self.conversation_display.width() - 50
+            if pixmap.width() > max_width:
+                pixmap = pixmap.scaledToWidth(max_width, Qt.TransformationMode.SmoothTransformation)
+            
+            # Insert the image into the conversation display
+            cursor = self.conversation_display.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertImage(pixmap.toImage())
+            cursor.insertText("\n\n")
+            
+            # Store the image to prevent garbage collection
+            self.images.append(pixmap)
+            self.image_paths.append(image_path)
+            
+        except Exception as e:
+            self.append_text(f"[Error displaying image: {str(e)}]\n", "error")
+    
+    def export_conversation(self):
+        """Export the conversation to a file"""
+        # Set default directory to user's documents folder or a custom exports folder
+        default_dir = ""
+        
+        # Try to use user's Documents folder
+        documents_path = os.path.join(os.path.expanduser("~"), "Documents")
+        if os.path.exists(documents_path):
+            default_dir = os.path.join(documents_path, "LiminalBackrooms")
+        else:
+            # Fallback to a local exports directory
+            default_dir = os.path.join(os.getcwd(), "exports")
+        
+        # Create the directory if it doesn't exist
+        os.makedirs(default_dir, exist_ok=True)
+        
+        # Generate a default filename based on date/time
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = os.path.join(default_dir, f"conversation_{timestamp}.txt")
+        
+        # Get the file name from a save dialog
+        file_name, selected_filter = QFileDialog.getSaveFileName(
+            self, 
+            "Export Conversation",
+            default_filename,
+            "Text Files (*.txt);;Markdown Files (*.md);;HTML Files (*.html);;Full HTML Document (*.html);;All Files (*)"
+        )
+        
+        if not file_name:
+            return  # User cancelled the dialog
+        
+        try:
+            # Determine export format based on file extension
+            _, ext = os.path.splitext(file_name)
+        
+            # Export as Full HTML Document
+            if selected_filter == "Full HTML Document (*.html)":
+                # Copy the existing conversation_full.html file if it exists
+                full_html_path = os.path.join(os.getcwd(), "conversation_full.html")
+                if os.path.exists(full_html_path):
+                    shutil.copy2(full_html_path, file_name)
+                    print(f"Full HTML document exported to {file_name}")
+                    
+                    # Get main window
+                    main_window = self.window()
+                    main_window.statusBar().showMessage(f"Full HTML document exported to {file_name}")
+                    return
+                else:
+                    # Fallback to regular HTML if full document doesn't exist
+                    content = self.conversation_display.toHtml()
+            elif ext.lower() == '.html':
+                # Export as HTML - the QTextEdit already contains HTML formatting
+                content = self.conversation_display.toHtml()
+            elif ext.lower() == '.md':
+                # Export as Markdown - convert HTML to markdown
+                html_content = self.conversation_display.toHtml()
+                # Simple conversion for now (could be improved with a proper HTML->MD converter)
+                content = html_content.replace('<b>', '**').replace('</b>', '**')
+                content = re.sub(r'<[^>]*>', '', content)  # Remove other HTML tags
+            else:
+                # Export as plain text
+                content = self.conversation_display.toPlainText()
+            
+            # Write content to file
+            with open(file_name, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            # For status message - get main window
+            main_window = self.window()
+            main_window.statusBar().showMessage(f"Conversation exported to {file_name}")
+            print(f"Conversation exported to {file_name}")
+            
+        except Exception as e:
+            error_msg = f"Error exporting conversation: {str(e)}"
+            QMessageBox.critical(self, "Export Error", error_msg)
+            print(error_msg)
+
+class LiminalBackroomsApp(QMainWindow):
+    """Main application window"""
+    def __init__(self):
+        super().__init__()
+        
+        # Main app state
         self.conversation = []
         self.turn_count = 0
         self.images = []
         self.image_paths = []
-        
-        # Modern color scheme
-        self.colors = {
-            'bg': '#1E1E1E',           # Dark background
-            'text_bg': '#252526',      # Slightly lighter background for text
-            'text_fg': '#D4D4D4',      # Light grey text
-            'input_bg': '#2D2D2D',     # Input background
-            'input_fg': '#D4D4D4',     # Input text
-            'accent': '#569CD6',       # Soft blue accent
-            'accent_hover': '#4E8CC2', # Darker blue for hover
-            'button_bg': '#2D2D2D',    # Button background
-            'border': '#3E3E42',       # Border color
-            'highlight': '#569CD6',    # Selection highlight
-            'label_fg': '#D4D4D4',     # Label text
-            'status_fg': '#569CD6',    # Status text
-            'selected_bg': '#37373D'   # Selection background
-        }
-        
-        # Add branch tracking
-        self.branch_conversations = {}  # Store branch conversations by selection_index
+        self.branch_conversations = {}  # Store branch conversations by ID
         self.active_branch = None      # Currently displayed branch
-        self.branch_tree = {}          # Tree structure of branches
-        master.title("liminal_backrooms v0.5")
         
-        # Configure window for full screen and resizing
-        master.geometry("1600x900")  # Larger default size for split view
-        master.minsize(1200, 800)    # Larger minimum size
+        # Set up the UI
+        self.setup_ui()
         
-        # Configure grid weights for proper resizing
-        master.grid_rowconfigure(0, weight=1)
-        master.grid_columnconfigure(0, weight=2)  # Main content area
-        master.grid_columnconfigure(1, weight=3)  # Branch tree area - make wider (3:2 ratio)
+        # Connect signals and slots
+        self.connect_signals()
         
-        # Create left and right panes
-        self.left_pane = ttk.Frame(master, padding="10", style='Cyberpunk.TFrame')
-        self.left_pane.grid(row=0, column=0, sticky='nsew')
+        # Dark theme
+        self.apply_dark_theme()
         
-        self.right_pane = ttk.Frame(master, padding="10", style='Cyberpunk.TFrame')
-        self.right_pane.grid(row=0, column=1, sticky='nsew')
+        # Restore splitter state if available
+        self.restore_splitter_state()
         
-        # Configure pane weights
-        self.left_pane.grid_rowconfigure(0, weight=1)
-        self.left_pane.grid_columnconfigure(0, weight=1)
-        self.right_pane.grid_rowconfigure(1, weight=1)  # Row 0 for title, 1 for tree
-        self.right_pane.grid_columnconfigure(0, weight=1)
+        # Start maximized
+        self.showMaximized()
+    
+    def setup_ui(self):
+        """Set up the user interface"""
+        self.setWindowTitle("Liminal Backrooms v0.7")
+        self.setGeometry(100, 100, 1600, 900)  # Initial size before maximizing
+        self.setMinimumSize(1200, 800)
         
-        # Add title to right pane
-        self.branch_title = tk.Label(
-            self.right_pane,
-            text="Propagation Network",
-            bg=self.colors['bg'],
-            fg=self.colors['label_fg'],
-            font=('Orbitron', 12)
-        )
-        self.branch_title.grid(row=0, column=0, pady=(0, 10), sticky='ew')
+        # Create central widget
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
         
-        # Replace tree view with network view
-        self.network_view = NetworkView(
-            self.right_pane,
-            self.colors,
-            bg=self.colors['text_bg'],
-            highlightthickness=1,
-            highlightbackground=self.colors['border']
-        )
-        self.network_view.grid(row=1, column=0, sticky='nsew')
+        # Create main layout
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(0)
+        
+        # Create horizontal splitter for left and right panes
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setHandleWidth(8)  # Make the handle wider for easier grabbing
+        self.splitter.setChildrenCollapsible(False)  # Prevent panes from being collapsed
+        self.splitter.setStyleSheet(f"""
+            QSplitter::handle {{
+                background-color: {COLORS['border']};
+                border: 1px solid {COLORS['border_highlight']};
+                border-radius: 2px;
+            }}
+            QSplitter::handle:hover {{
+                background-color: {COLORS['accent_blue']};
+            }}
+        """)
+        main_layout.addWidget(self.splitter)
+        
+        # Create left pane (conversation) and right pane (network view)
+        self.left_pane = ConversationPane()
+        self.right_pane = NetworkPane()
+        
+        self.splitter.addWidget(self.left_pane)
+        self.splitter.addWidget(self.right_pane)
+        
+        # Set initial splitter sizes (65:35 ratio for more space for the network)
+        total_width = 1600  # Based on default window width
+        self.splitter.setSizes([int(total_width * 0.65), int(total_width * 0.35)])
         
         # Initialize main conversation as root node
-        self.network_view.add_node('main', 'Seed', 'main')
+        self.right_pane.add_node('main', 'Seed', 'main')
         
-        # Bind network selection event
-        self.network_view.bind('<<NodeSelected>>', self.on_branch_select)
+        # Status bar with modern styling
+        self.statusBar().setStyleSheet(f"""
+            QStatusBar {{
+                background-color: {COLORS['bg_dark']};
+                color: {COLORS['text_dim']};
+                border-top: 1px solid {COLORS['border']};
+                padding: 3px;
+                font-size: 11px;
+            }}
+        """)
+        self.statusBar().showMessage("Ready")
         
-        # Configure window style
-        master.configure(bg=self.colors['bg'])
+        # Set up input callback
+        self.left_pane.set_input_callback(self.handle_user_input)
+    
+    def connect_signals(self):
+        """Connect all signals and slots"""
+        # Node selection in network view
+        self.right_pane.nodeSelected.connect(self.on_branch_select)
         
-        # Style configuration
-        style = ttk.Style()
-        style.configure('Cyberpunk.TFrame', background=self.colors['bg'])
-        style.configure('Cyberpunk.TCombobox',
-            fieldbackground=self.colors['input_bg'],
-            background=self.colors['input_bg'],
-            foreground=self.colors['input_fg'],
-            arrowcolor=self.colors['accent'],
-            selectbackground=self.colors['accent']
-        )
+        # Node hover in network view
+        if hasattr(self.right_pane.network_view, 'nodeHovered'):
+            self.right_pane.network_view.nodeHovered.connect(self.on_node_hover)
         
-        # Main container frame with proper weights
-        self.main_frame = ttk.Frame(master, padding="20", style='Cyberpunk.TFrame')
-        self.main_frame.grid(row=0, column=0, sticky='nsew')
-        self.main_frame.grid_rowconfigure(0, weight=1)  # Make text area expand
-        self.main_frame.grid_columnconfigure(0, weight=1)  # Make columns expand
-        
-        # Text area with modern styling
-        text_frame = tk.Frame(
-            self.main_frame,
-            bg=self.colors['border'],
-            bd=1,
-            relief='solid'
-        )
-        text_frame.grid(row=0, column=0, sticky='nsew', pady=(0, 15))
-        text_frame.grid_rowconfigure(0, weight=1)
-        text_frame.grid_columnconfigure(0, weight=1)
-        
-        self.text_area = scrolledtext.ScrolledText(
-            text_frame,
-            wrap=tk.WORD,
-            bg=self.colors['text_bg'],
-            fg=self.colors['text_fg'],
-            insertbackground=self.colors['accent'],
-            font=('Cascadia Code', 10),  # Modern monospace font
-            padx=15,
-            pady=15,
-            relief='flat',
-            borderwidth=0,
-            selectbackground=self.colors['selected_bg'],
-            selectforeground=self.colors['text_fg']
-        )
-        self.text_area.grid(row=0, column=0, sticky='nsew', padx=1, pady=1)
-        
-        # Configure text tags for different message types
-        self.text_area.tag_configure('bold', font=('Cascadia Code Bold', 10))
-        self.text_area.tag_configure('user', foreground='#D4D4D4')  # Light grey
-        self.text_area.tag_configure('ai', foreground='#D4D4D4')    # Light grey
-        self.text_area.tag_configure('system', foreground='#569CD6') # Soft blue
-        self.text_area.tag_configure('emoji', font=('Segoe UI Emoji', 10))
-        self.text_area.tag_configure('header', font=('Cascadia Code Bold', 10), foreground='#569CD6')
-
-        # Create right-click context menu
-        self.context_menu = tk.Menu(self.master, tearoff=0, bg=self.colors['bg'], fg=self.colors['text_fg'])
-        self.context_menu.add_command(
-            label="🕳️ Rabbithole",
-            command=self.branch_from_selection
-        )
-        self.context_menu.add_command(
-            label="🔱 Fork",
-            command=self.fork_from_selection
-        )
-        
-        # Bind right-click event
-        self.text_area.bind('<Button-3>', self.show_context_menu)
-        
-        # Bind selection events
-        self.text_area.bind('<<Selection>>', self.on_selection)
-        
-        # Input field with neon glow effect
-        input_frame = tk.Frame(
-            self.main_frame,
-            bg=self.colors['border'],
-            relief='solid',
-            bd=1
-        )
-        input_frame.grid(row=2, column=0, sticky='ew')
-        
-        self.input_field = tk.Entry(
-            input_frame,
-            bg=self.colors['input_bg'],
-            fg=self.colors['input_fg'],
-            insertbackground=self.colors['accent'],
-            font=('Cascadia Code', 11),
-            relief='flat',
-            bd=0
-        )
-        self.input_field.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10, pady=10)
-        
-        # Submit button with neon effect
-        self.submit_button = tk.Button(
-            input_frame,
-            text="PROPAGATE",
-            command=self.submit_input,
-            bg=self.colors['accent'],
-            fg='white',
-            activebackground=self.colors['accent_hover'],
-            activeforeground='white',
-            relief='flat',
-            bd=0,
-            padx=20,
-            pady=8,
-            font=('Cascadia Code', 10),
-            cursor='hand2'
-        )
-        self.submit_button.pack(side=tk.RIGHT, padx=10, pady=10)
-        
-        # Status bar with cyberpunk styling
-        self.status_bar = tk.Label(
-            self.main_frame,
-            text=">> DORMANT <<",
-            bg=self.colors['bg'],
-            fg=self.colors['status_fg'],
-            bd=1,
-            relief=tk.SUNKEN,
-            anchor=tk.W,
-            padx=10,
-            font=('Cascadia Code', 9)
-        )
-        self.status_bar.grid(row=3, column=0, sticky='ew')
-        
-        # Loading animation characters (more cyberpunk)
-        self.loading_chars = ["◢", "◣", "◤", "◥"]
-        
-        # Control panel frame
-        control_frame = tk.Frame(
-            self.main_frame,
-            bg=self.colors['bg'],
-            relief='flat'
-        )
-        control_frame.grid(row=1, column=0, sticky='ew', pady=(0, 15))
-        
-        # Mode selection
-        mode_frame = tk.Frame(control_frame, bg=self.colors['bg'])
-        mode_frame.pack(side=tk.LEFT, padx=5)
-        
-        tk.Label(
-            mode_frame,
-            text="Mode:",
-            bg=self.colors['bg'],
-            fg=self.colors['label_fg'],
-            font=('Segoe UI', 10)
-        ).pack(side=tk.LEFT, padx=5)
-        
-        self.mode_var = tk.StringVar(value="AI-AI")
-        mode_dropdown = ttk.Combobox(
-            mode_frame,
-            textvariable=self.mode_var,
-            values=["AI-AI", "Human-AI"],
-            width=10,
-            state="readonly"
-        )
-        mode_dropdown.pack(side=tk.LEFT, padx=5)
-        
-        # Turns selection with modern styling
-        turns_frame = tk.Frame(control_frame, bg=self.colors['bg'])
-        turns_frame.pack(side=tk.LEFT, padx=5)
-        
-        tk.Label(
-            turns_frame,
-            text="Iterations:",
-            bg=self.colors['bg'],
-            fg=self.colors['label_fg'],
-            font=('Segoe UI', 10)
-        ).pack(side=tk.LEFT, padx=5)
-        
-        self.turns_var = tk.StringVar(value="1")
-        self.turns_dropdown = ttk.Combobox(
-            turns_frame,
-            textvariable=self.turns_var,
-            values=["1", "2", "4", "6", "8", "100"],
-            width=5,
-            state="readonly"
-        )
-        self.turns_dropdown.pack(side=tk.LEFT, padx=5)
-
-        # Model selections
-        for i, (label, var_name) in enumerate([
-            ("AI-1 Model:", "ai_1_model_var"),
-            ("AI-2 Model:", "ai_2_model_var")
-        ]):
-            model_frame = tk.Frame(control_frame, bg=self.colors['bg'])
-            model_frame.pack(side=tk.LEFT, padx=20)
-            
-            tk.Label(
-                model_frame,
-                text=label,
-                bg=self.colors['bg'],
-                fg=self.colors['label_fg'],
-                font=('Segoe UI', 10)
-            ).pack(side=tk.LEFT, padx=5)
-            
-            # Set both dropdowns to the first model in the config
-            setattr(self, var_name, tk.StringVar(value=list(AI_MODELS.keys())[0]))
-            ttk.Combobox(
-                model_frame,
-                textvariable=getattr(self, var_name),
-                values=list(AI_MODELS.keys()),
-                width=15,
-                state="readonly"
-            ).pack(side=tk.LEFT, padx=5)
-
-        # Prompt pair selection
-        prompt_frame = tk.Frame(control_frame, bg=self.colors['bg'])
-        prompt_frame.pack(side=tk.LEFT, padx=20)
-        
-        tk.Label(
-            prompt_frame,
-            text="Scenario:",
-            bg=self.colors['bg'],
-            fg=self.colors['label_fg'],
-            font=('Segoe UI', 10)
-        ).pack(side=tk.LEFT, padx=5)
-        
-        self.prompt_pair_var = tk.StringVar(value=list(SYSTEM_PROMPT_PAIRS.keys())[0])
-        self.prompt_pair_dropdown = ttk.Combobox(
-            prompt_frame,
-            textvariable=self.prompt_pair_var,
-            values=list(SYSTEM_PROMPT_PAIRS.keys()),
-            width=20,
-            state="readonly"
-        )
-        self.prompt_pair_dropdown.pack(side=tk.LEFT, padx=5)
-
         # Export button
-        self.export_button = tk.Button(
-            control_frame,
-            text="Export",
-            command=self.export_conversation,
-            bg=self.colors['button_bg'],
-            fg=self.colors['label_fg'],
-            activebackground=self.colors['accent'],
-            activeforeground='white',
-            relief='flat',
-            bd=0,
-            padx=15,
-            pady=6,
-            font=('Segoe UI', 10),
-            cursor='hand2'
-        )
-        self.export_button.pack(side=tk.RIGHT, padx=5)
-
-        # Bind events
-        self.input_field.bind('<Return>', lambda e: self.submit_input())
-        self.input_callback = None
-
-        # Add hover effects
-        for button in [self.submit_button, self.export_button]:
-            button.bind('<Enter>', self._on_button_hover)
-            button.bind('<Leave>', self._on_button_leave)
-
-        # Add loading indicator
-        self.loading = False
-        self.loading_index = 0
-
-        # Bind keyboard shortcuts
-        self.master.bind('<Control-Return>', lambda e: self.submit_input())  # Ctrl+Enter to submit
-        self.master.bind('<Control-l>', lambda e: self.clear_conversation())  # Ctrl+L to clear
-        self.master.bind('<Control-s>', lambda e: self.export_conversation())  # Ctrl+S to save
+        self.left_pane.control_panel.export_button.clicked.connect(self.export_conversation)
         
-        # Add tooltips
-        self.create_tooltip(self.submit_button, "Send message (Enter)")
-        self.create_tooltip(self.export_button, "Export conversation (Ctrl+S)")
-        self.create_tooltip(mode_dropdown, "Switch between AI-AI chat and Human-AI chat")
-        self.create_tooltip(self.turns_dropdown, "Number of conversation turns")
-
-        # Add maximize button functionality
-        self.master.bind('<F11>', self.toggle_fullscreen)
-        self.master.bind('<Escape>', self.end_fullscreen)
-        self.fullscreen = False
-
-    def _on_button_hover(self, event):
-        if event.widget == self.submit_button:
-            event.widget.configure(bg=self.colors['accent_hover'])
-        else:
-            event.widget.configure(bg=self.colors['accent'])
-
-    def _on_button_leave(self, event):
-        if event.widget == self.submit_button:
-            event.widget.configure(bg=self.colors['accent'])
-        else:
-            event.widget.configure(bg=self.colors['button_bg'])
-
+        # Connect context menu actions to the main app methods
+        self.left_pane.set_rabbithole_callback(self.branch_from_selection)
+        self.left_pane.set_fork_callback(self.fork_from_selection)
+        
+        # Save splitter state when it moves
+        self.splitter.splitterMoved.connect(self.save_splitter_state)
+    
+    def handle_user_input(self, text):
+        """Handle user input from the conversation pane"""
+        # Add user message to conversation
+        if text:
+            user_message = {
+                "role": "user",
+                "content": text
+            }
+            self.conversation.append(user_message)
+            
+            # Update conversation display
+            self.left_pane.update_conversation(self.conversation)
+        
+        # Process the conversation (this will be implemented in main.py)
+        if hasattr(self, 'process_conversation'):
+            self.process_conversation()
+    
+    def append_text(self, text, format_type="normal"):
+        """Append text to the conversation display with the specified format"""
+        self.left_pane.append_text(text, format_type)
+    
+    def clear_conversation(self):
+        """Clear the conversation display and reset images"""
+        self.left_pane.clear_conversation()
+        self.conversation = []
+        self.images = []
+        self.image_paths = []
+    
+    def display_conversation(self, conversation, branch_data=None):
+        """Display the conversation in the text edit widget"""
+        self.left_pane.display_conversation(conversation, branch_data)
+    
+    def display_image(self, image_path):
+        """Display an image in the conversation"""
+        self.left_pane.display_image(image_path)
+    
     def export_conversation(self):
-        """Export conversation and save any images"""
-        try:
-            # Create timestamp for unique filename
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            # Create export directory if it doesn't exist
-            export_dir = "exports"
-            if not os.path.exists(export_dir):
-                os.makedirs(export_dir)
-            
-            # Create conversation directory
-            conversation_dir = os.path.join(export_dir, f"conversation_{timestamp}")
-            os.makedirs(conversation_dir)
-            
-            # Export text
-            text_path = os.path.join(conversation_dir, "conversation.txt")
-            with open(text_path, 'w', encoding='utf-8') as f:
-                f.write(self.text_area.get('1.0', tk.END))
-            
-            # Copy images if any
-            if self.image_paths:
-                images_dir = os.path.join(conversation_dir, "images")
-                os.makedirs(images_dir)
-                for i, image_path in enumerate(self.image_paths):
-                    if os.path.exists(image_path):
-                        ext = os.path.splitext(image_path)[1]
-                        new_path = os.path.join(images_dir, f"image_{i}{ext}")
-                        shutil.copy2(image_path, new_path)
-            
-            self.append_text(f"\nConversation exported to: {conversation_dir}\n")
-            
-        except Exception as e:
-            print(f"Error exporting conversation: {e}")
-            self.append_text(f"\nError exporting conversation: {e}\n")
-
-    def display_image(self, image_url):
-        """Display an image from URL in the text area"""
-        try:
-            # Check if the URL is actually a local path (starts with 'generated_')
-            if image_url.startswith(('generated_', 'images/generated_')):
-                local_path = image_url  # Use existing path
-            else:
-                # Create images directory if it doesn't exist
-                if not os.path.exists('images'):
-                    os.makedirs('images')
-                    
-                # Generate a filename from timestamp
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                local_path = os.path.join('images', f'generated_{timestamp}.jpg')
-                
-                # Download the image
-                response = requests.get(image_url)
-                response.raise_for_status()
-                
-                # Save the image locally
-                with open(local_path, 'wb') as f:
-                    f.write(response.content)
-            
-            # Open and resize image
-            image = Image.open(local_path)
-            # Calculate new size while maintaining aspect ratio
-            max_width = 400
-            ratio = max_width / image.width
-            new_size = (int(image.width * ratio), int(image.height * ratio))
-            image = image.resize(new_size, Image.Resampling.LANCZOS)
-            
-            # Convert to PhotoImage and store reference
-            photo = ImageTk.PhotoImage(image)
-            self.images.append(photo)
-            
-            # Insert image into text area
-            self.text_area.insert('end', '\n')
-            self.text_area.image_create('end-1c', image=photo)
-            self.text_area.insert('end', '\n\n')
-            
-            # Store image path only if it's not already stored
-            if local_path not in self.image_paths:
-                self.image_paths.append(local_path)
-            
-        except Exception as e:
-            print(f"Error loading image: {e}")
-            self.append_text(f"\nError loading image: {e}\n")
-
-    def append_text(self, text):
-        """Append text to the text area without auto-scrolling"""
-        self.text_area.insert('end', text)
-
-    def update_loading(self):
-        if self.loading:
-            self.loading_index = (self.loading_index + 1) % len(self.loading_chars)
-            self.status_bar.config(
-                text=f">> {self.loading_chars[self.loading_index]} PROPAGATING {self.loading_chars[(self.loading_index + 2) % 4]} <<",
-                fg=self.colors['accent']
-            )
-            self.master.after(100, self.update_loading)
-            
-    def start_loading(self):
-        self.loading = True
-        self.update_loading()
-        self.input_field.config(state='disabled')
-        self.submit_button.config(state='disabled')
+        """Export the current conversation"""
+        self.left_pane.export_conversation()
+    
+    def on_node_hover(self, node_id):
+        """Handle node hover in the network view"""
+        if node_id == 'main':
+            self.statusBar().showMessage("Main conversation")
+        elif node_id in self.branch_conversations:
+            branch_data = self.branch_conversations[node_id]
+            branch_type = branch_data.get('type', 'branch')
+            selected_text = branch_data.get('selected_text', '')
+            self.statusBar().showMessage(f"{branch_type.capitalize()}: {selected_text[:50]}...")
+    
+    def apply_dark_theme(self):
+        """Apply dark theme to the application"""
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background-color: {COLORS['bg_dark']};
+                color: {COLORS['text_normal']};
+            }}
+            QWidget {{
+                background-color: {COLORS['bg_dark']};
+                color: {COLORS['text_normal']};
+            }}
+            QToolTip {{
+                background-color: {COLORS['bg_light']};
+                color: {COLORS['text_normal']};
+                border: 1px solid {COLORS['border']};
+                padding: 5px;
+            }}
+        """)
         
-    def stop_loading(self):
-        self.loading = False
-        self.status_bar.config(text=">> DORMANT <<", fg=self.colors['status_fg'])
-        self.input_field.config(state='normal')
-        self.submit_button.config(state='normal')
-        self.input_field.focus_set()
+        # Add specific styling for branch messages
+        branch_header_format = QTextCharFormat()
+        branch_header_format.setForeground(QColor(COLORS['ai_header']))
+        branch_header_format.setFontWeight(QFont.Weight.Bold)
+        branch_header_format.setFontPointSize(11)
         
-    def submit_input(self):
-        """Handle input submission for both main conversation and branches"""
-        if self.input_callback and not self.loading:
-            input_text = self.input_field.get().strip()
-            
-            # Store the input text before clearing the field
-            stored_input = input_text
-            
-            # Clear the input field
-            self.input_field.delete(0, tk.END)
-            
-            # Get the current conversation based on active branch
-            if self.active_branch:
-                current_conversation = self.branch_conversations[self.active_branch]
-                
-                # Add the input to the branch conversation if there is any
-                if stored_input:
-                    current_conversation['conversation'].append({
-                        "role": "user",
-                        "content": stored_input
-                    })
-                    self.display_conversation(current_conversation['conversation'], self.text_area)
-                
-                # Start processing
-                self.start_loading()
-                self.process_branch_conversation(self.active_branch)
-            else:
-                # Handle main conversation
-                self.start_loading()
-                # Pass the stored input to the callback
-                self.input_callback(stored_input)
-
-    def _append_to_branch(self, text, branch_id):
-        """Internal method to append text to a branch conversation"""
-        if self.active_branch == branch_id:  # Only update if we're still viewing this branch
-            self.text_area.insert('end', text)
-            self.text_area.see('end')
-
-    def process_branch_conversation(self, branch_id):
-        """Process the branch conversation using the selected models"""
+        branch_inline_format = QTextCharFormat()
+        branch_inline_format.setForeground(QColor(COLORS['ai_header']))
+        branch_inline_format.setFontItalic(True)
+        branch_inline_format.setFontPointSize(10)
+        
+        # Add formats to the left pane
+        self.left_pane.text_formats["branch_header"] = branch_header_format
+        self.left_pane.text_formats["branch_inline"] = branch_inline_format
+    
+    def on_branch_select(self, branch_id):
+        """Handle branch selection in the network view"""
         try:
+            # Check if branch exists
+            if branch_id == 'main':
+                # Switch to main conversation
+                self.active_branch = None
+                # Make sure we have a main_conversation attribute
+                if not hasattr(self, 'main_conversation'):
+                    self.main_conversation = []
+                self.conversation = self.main_conversation
+                self.left_pane.update_conversation(self.conversation)
+                self.statusBar().showMessage("Switched to main conversation")
+                return
+            
+            if branch_id not in self.branch_conversations:
+                self.statusBar().showMessage(f"Branch {branch_id} not found")
+                return
+            
+            # Get branch data
             branch_data = self.branch_conversations[branch_id]
             
-            # Get current max turns from dropdown
-            max_turns = int(self.turns_var.get())
+            # Set active branch
+            self.active_branch = branch_id
             
-            # Check if we've reached max turns for this branch
-            if branch_data['turn_count'] >= max_turns:
-                branch_data['turn_count'] = 0
-                # Update the history differently based on branch type
-                if branch_data.get('type') == 'fork':
-                    # For fork, keep only context up to the selected point plus new conversation
-                    branch_data['history'] = branch_data['selected_with_context']
-                else:
-                    # For rabbithole, keep full updated context
-                    branch_data['history'] = self.text_area.get('1.0', tk.END)
+            # Update conversation
+            self.conversation = branch_data['conversation']
             
-            # Import ai_turn here to avoid circular imports
-            from main import ai_turn
+            # Display the conversation with branch metadata
+            self.left_pane.display_conversation(self.conversation, branch_data)
             
-            # Get the current prompt pair
-            prompt_pair = SYSTEM_PROMPT_PAIRS[self.prompt_pair_var.get()]
-            
-            # Create different prompts based on branch type
-            if branch_data.get('type') == 'fork':
-                branch_prompt = (
-                    f"The following is the conversation context up to this point:\n\n{branch_data['selected_with_context']}\n\n"
-                    f"Continue the conversation naturally from this exact point: '{branch_data['selected_text']}'. "
-                    f"Complete the thought or sentence and continue forward as if you were the original speaker. "
-                    f"Do not repeat or rephrase the selected text - start immediately with the continuation."
-                )
-            else:
-                branch_prompt = (
-                    f"The following is the conversation context up to this point:\n\n{branch_data['history']}\n\n"
-                    f"Now, let's explore and expand upon the concept of '{branch_data['selected_text']}' that emerged in this context. "
-                    f"Use the previous context to inform the discussion, but focus on developing and expanding upon "
-                    f"this specific concept in depth."
-                )
-            
-            # Get selected models
-            ai_1_model = self.ai_1_model_var.get()
-            ai_2_model = self.ai_2_model_var.get()
-            
-            # Combine branch prompt with the regular system prompts
-            ai_1_prompt = branch_prompt + "\n\n" + prompt_pair["AI_1"]
-            ai_2_prompt = branch_prompt + "\n\n" + prompt_pair["AI_2"]
-            
-            def append_to_branch(text):
-                """Wrapper to append text to the branch conversation"""
-                # Use after() to safely update GUI from thread
-                self.master.after(0, lambda: self._append_to_branch(text, branch_id))
-            
-            def process_next_turn():
-                """Process the next turn in the conversation"""
-                try:
-                    # Process AI-1's turn
-                    branch_data['conversation'] = ai_turn(
-                        "AI-1",
-                        branch_data['conversation'],
-                        ai_1_model,
-                        ai_1_prompt,
-                        gui=None,
-                        is_branch=True,
-                        branch_output=append_to_branch
-                    )
-                    
-                    # Process AI-2's turn
-                    branch_data['conversation'] = ai_turn(
-                        "AI-2",
-                        branch_data['conversation'],
-                        ai_2_model,
-                        ai_2_prompt,
-                        gui=None,
-                        is_branch=True,
-                        branch_output=append_to_branch
-                    )
-                    
-                    branch_data['turn_count'] += 1
-                    
-                    # Show remaining turns
-                    remaining_turns = max_turns - branch_data['turn_count']
-                    if remaining_turns > 0:
-                        append_to_branch(f"\n({remaining_turns} turns remaining in this branch)\n")
-                        # Schedule the next turn with a delay
-                        self.master.after(1000, lambda: self.process_branch_conversation(branch_id))
-                    else:
-                        # Show different completion message based on branch type
-                        if branch_data.get('type') == 'loom':
-                            append_to_branch("\n🧶 Loom paused. Click propagate to continue growing.\n")
-                        else:
-                            append_to_branch("\n🕳️ Branch exploration paused. Click propagate to continue growing.\n")
-                        self.master.after(0, self.stop_loading)
-                        
-                except Exception as e:
-                    error_msg = f"\nError in branch turn: {str(e)}\n"
-                    self.master.after(0, lambda: self._append_to_branch(error_msg, branch_id))
-                    self.master.after(0, self.stop_loading)
-            
-            # Start processing this turn in a new thread
-            thread = threading.Thread(target=process_next_turn)
-            thread.daemon = True
-            thread.start()
+            # Update status bar
+            self.statusBar().showMessage(f"Switched to {branch_data['type']} branch: {branch_id}")
             
         except Exception as e:
-            error_msg = f"\nError in branch conversation: {str(e)}\n"
-            self.master.after(0, lambda: self.text_area.insert('end', error_msg))
-            self.master.after(0, lambda: self.text_area.see('end'))
-            print(f"Branch conversation error: {e}")
-            self.master.after(0, self.stop_loading)
-
-    def display_conversation(self, conversation, text_area):
-        """Display the selected conversation in the text area with context"""
-        text_area.delete('1.0', tk.END)
-        
-        # Configure text tags with more distinct styling
-        text_area.tag_configure('bold', font=('Cascadia Code Bold', 10))
-        text_area.tag_configure('user', foreground='#569CD6')  # Soft blue for user
-        text_area.tag_configure('ai', foreground='#4EC9B0')    # Teal for AI
-        text_area.tag_configure('system', foreground='#CE9178') # Soft orange for system
-        text_area.tag_configure('emoji', font=('Segoe UI Emoji', 12))  # Larger font for emojis
-        text_area.tag_configure('header', font=('Cascadia Code Bold', 10), foreground='#569CD6')
-        text_area.tag_configure('chain_of_thought', foreground='#608B4E')  # Green for chain of thought
-        text_area.tag_configure('branch_text', foreground='#C586C0')  # Purple for branch text
-        
-        # If this is a branch conversation, show the context and path
-        if self.active_branch:
-            branch_data = self.branch_conversations[self.active_branch]
-            path = self.get_branch_path(self.active_branch)
-            text_area.insert('end', "=== Branch Path: ", 'header')
-            text_area.insert('end', f"{path} ===\n\n", 'branch_text')
-            text_area.insert('end', "=== Original Conversation Context ===\n\n", 'header')
-            text_area.insert('end', branch_data['history'])
-            
-            # Show different header based on branch type
-            if branch_data.get('type') == 'fork':
-                text_area.insert('end', "\n\n=== ", 'header')
-                text_area.insert('end', "🔱 ", ('emoji', 'branch_text'))
-                text_area.insert('end', f"Forking forward from: ", 'header')
-                text_area.insert('end', f"'{branch_data['selected_text']}'", 'branch_text')
-                text_area.insert('end', " ===\n\n", 'header')
-            else:
-                text_area.insert('end', "\n\n=== ", 'header')
-                text_area.insert('end', "🕳️ ", ('emoji', 'branch_text'))
-                text_area.insert('end', f"Rabbitholing down: ", 'header')
-                text_area.insert('end', f"'{branch_data['selected_text']}'", 'branch_text')
-                text_area.insert('end', " ===\n\n", 'header')
-        
-        # Display the conversation messages
-        for msg in conversation:
-            if isinstance(msg, dict):
-                if msg["role"] == "user":
-                    # Skip the initial branch message since we already showed it in the header
-                    if self.active_branch and msg.get('display', '').startswith(('🕳️ Rabbitholing on', '🧶 Looming forward')):
-                        continue
-                    
-                    # Handle user messages
-                    text_area.insert('end', "\nYou: ", 'user')
-                    
-                    # Check if message starts with emoji
-                    content = msg.get('display', msg['content'])
-                    if any(content.startswith(emoji) for emoji in ['🕳️', '🧶']):
-                        emoji_end = 2  # Length of emoji character
-                        text_area.insert('end', content[:emoji_end], 'emoji')
-                        text_area.insert('end', content[emoji_end:], 'branch_text')
-                    else:
-                        text_area.insert('end', f"{content}\n", 'user')
-                else:
-                    # Handle AI messages
-                    text_area.insert('end', '\n')  # Line break before
-                    
-                    # Insert AI attribution ONCE
-                    if 'model' in msg:
-                        ai_name = "AI-2" if "AI-2" in msg.get('model', '') else "AI-1"
-                        text_area.insert('end', f"{ai_name} ({msg['model']}):\n\n", 'header')
-                    else:
-                        text_area.insert('end', f"{msg.get('model', 'AI')}:\n\n", 'header')
-                    
-                    # Handle Chain of Thought if present
-                    if 'display' in msg and SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT:
-                        cot_parts = msg['display'].split('[Final Answer]')
-                        if len(cot_parts) > 1:
-                            # Display Chain of Thought in green
-                            text_area.insert('end', cot_parts[0].strip(), 'chain_of_thought')
-                            text_area.insert('end', '\n\n[Final Answer]\n', 'header')
-                            text_area.insert('end', cot_parts[1].strip(), 'ai')
-                        else:
-                            text_area.insert('end', msg['display'], 'ai')
-                    else:
-                        text_area.insert('end', f"{msg.get('content', '')}\n", 'ai')
-            else:
-                # Handle plain text messages
-                if str(msg).startswith(('🕳️', '🧶')):
-                    text_area.insert('end', msg[:2], 'emoji')
-                    text_area.insert('end', msg[2:] + '\n', 'branch_text')
-                else:
-                    text_area.insert('end', f"\n{msg}\n")
-                
-        text_area.see('end')
-
-    def set_input_callback(self, callback):
-        self.input_callback = callback
-
-    def create_tooltip(self, widget, text):
-        def show_tooltip(event):
-            tooltip = tk.Toplevel()
-            tooltip.wm_overrideredirect(True)
-            tooltip.wm_geometry(f"+{event.x_root+10}+{event.y_root+10}")
-            
-            label = tk.Label(
-                tooltip,
-                text=text,
-                bg=self.colors['bg'],
-                fg=self.colors['label_fg'],
-                relief='solid',
-                borderwidth=1,
-                font=('Segoe UI', 9)
-            )
-            label.pack()
-            
-            def hide_tooltip():
-                tooltip.destroy()
-            
-            widget.tooltip = tooltip
-            widget.bind('<Leave>', lambda e: hide_tooltip())
-            
-        widget.bind('<Enter>', show_tooltip)
-        
-    def clear_conversation(self):
-        """Clear the conversation history"""
-        if not self.loading:
-            self.text_area.delete('1.0', tk.END)
-            self.conversation = []
-            self.turn_count = 0
-            self.images = []
-            self.image_paths = []
-            self.status_bar.config(text=">> NEURAL LINK RESET <<", fg=self.colors['status_fg'])
-            self.append_text("[ Neural interface initialized. Ready for new input. ]\n")
-
-    def toggle_fullscreen(self, event=None):
-        self.fullscreen = not self.fullscreen
-        self.master.attributes('-fullscreen', self.fullscreen)
-        
-    def end_fullscreen(self, event=None):
-        self.fullscreen = False
-        self.master.attributes('-fullscreen', False)
-
-    def show_context_menu(self, event):
-        """Show the context menu on right-click if text is selected"""
-        try:
-            if self.text_area.tag_ranges("sel"):  # If there's a selection
-                self.context_menu.post(event.x_root, event.y_root)
-        except tk.TclError:
-            pass
+            print(f"Error selecting branch: {e}")
+            self.statusBar().showMessage(f"Error selecting branch: {e}")
     
-    def on_selection(self, event):
-        """Handle text selection events"""
-        try:
-            if self.text_area.tag_ranges("sel"):
-                selected_text = self.text_area.get("sel.first", "sel.last")
-                print(f"Selected text: {selected_text}")  # For debugging
-        except tk.TclError:
-            pass
+    def branch_from_selection(self, selected_text):
+        """Create a rabbithole branch from selected text"""
+        if not selected_text:
+            return
+        
+        # Create branch
+        branch_id = self.create_branch(selected_text, 'rabbithole')
+        
+        # Switch to branch
+        self.on_branch_select(branch_id)
     
-    def branch_from_selection(self):
-        """Create a new conversation branch from the selected text"""
-        try:
-            if self.text_area.tag_ranges("sel"):
-                selected_text = self.text_area.get("sel.first", "sel.last")
-                # Store the selection position for context
-                selection_index = self.text_area.index("sel.first")
-                print(f"Branching from: {selected_text} at position {selection_index}")
-                # TODO: Implement branching logic
-                self.create_branch(selected_text, selection_index)
-        except tk.TclError:
-            pass
+    def fork_from_selection(self, selected_text):
+        """Create a fork branch from selected text"""
+        if not selected_text:
+            return
+        
+        # Create branch
+        branch_id = self.create_branch(selected_text, 'fork')
+        
+        # Switch to branch
+        self.on_branch_select(branch_id)
     
-    def create_branch(self, selected_text, selection_index, parent_branch=None):
+    def create_branch(self, selected_text, branch_type="rabbithole", parent_branch=None):
         """Create a new branch in the conversation"""
         try:
-            # Generate a unique branch ID
-            branch_id = f"branch_{len(self.branch_conversations)}"
+            # Generate a unique ID for the branch
+            branch_id = str(uuid.uuid4())
             
-            # Determine parent and context
-            if self.active_branch:
-                parent_id = self.active_branch
-                parent_data = self.branch_conversations[self.active_branch]
-                # Keep full context including text after selection for rabbitholing
-                main_text = self.text_area.get('1.0', 'end')
-                # Calculate depth based on network view's depth tracking
-                parent_depth = self.network_view.get_node_depth(parent_id)
-                branch_depth = parent_depth + 1
+            # Get parent branch ID
+            parent_id = parent_branch if parent_branch else (self.active_branch if self.active_branch else 'main')
+            
+            # Get current conversation
+            if parent_id == 'main':
+                # If parent is main, use main conversation
+                if not hasattr(self, 'main_conversation'):
+                    self.main_conversation = []
+                current_conversation = self.main_conversation.copy()
             else:
-                parent_id = 'main'
-                # Keep full context including text after selection for rabbitholing
-                main_text = self.text_area.get('1.0', 'end')
-                branch_depth = 1
+                # Otherwise, use parent branch conversation
+                parent_data = self.branch_conversations.get(parent_id)
+                if parent_data:
+                    current_conversation = parent_data['conversation'].copy()
+                else:
+                    current_conversation = []
             
-            # Store branch data
-            self.branch_conversations[branch_id] = {
-                'history': main_text,  # Stores full conversation context
+            # Create initial message based on branch type
+            if branch_type == 'fork':
+                initial_message = {
+                    "role": "user",
+                    "content": f"Complete this thought or sentence naturally, continuing forward from exactly this point: '{selected_text}'"
+                }
+            else:  # rabbithole
+                initial_message = {
+                    "role": "user",
+                    "content": f"Let's explore and expand upon the concept of '{selected_text}' from our previous discussion."
+                }
+            
+            # Create branch conversation with initial message
+            branch_conversation = current_conversation.copy()
+            branch_conversation.append(initial_message)
+            
+            # Create branch data
+            branch_data = {
+                'id': branch_id,
+                'parent': parent_id,
+                'type': branch_type,
                 'selected_text': selected_text,
-                'conversation': [],
+                'conversation': branch_conversation,
                 'turn_count': 0,
-                'parent_id': parent_id,
-                'depth': branch_depth,
-                'children': []
+                'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'history': current_conversation
             }
             
-            # Update parent's children list
-            if parent_id != 'main':
-                self.branch_conversations[parent_id]['children'].append(branch_id)
+            # Store branch data
+            self.branch_conversations[branch_id] = branch_data
             
-            # Add node to network view
-            display_text = selected_text[:40] + "..." if len(selected_text) > 40 else selected_text
-            self.network_view.add_node(branch_id, display_text, "branch", parent_id)
+            # Add node to network graph - make sure parameters are in the correct order
+            node_label = f"{branch_type.capitalize()}: {selected_text[:20]}{'...' if len(selected_text) > 20 else ''}"
+            self.right_pane.add_node(branch_id, node_label, branch_type)
+            self.right_pane.add_edge(parent_id, branch_id)
             
-            # Switch to this branch immediately
+            # Set active branch to this new branch
             self.active_branch = branch_id
-            self.update_branch_visuals()
+            self.conversation = branch_conversation
             
-            # Add initial message and display it
-            self.branch_conversations[branch_id]['conversation'].append({
-                "role": "user",
-                "content": f"Let's explore and expand upon the concept of '{selected_text}' from our previous discussion.",
-                "display": f"🕳️ Rabbitholing on '{selected_text}'"
-            })
-            self.display_conversation(
-                self.branch_conversations[branch_id]['conversation'],
-                self.text_area
-            )
+            # Display the conversation
+            self.left_pane.display_conversation(branch_conversation, branch_data)
             
-            # Start processing in a separate thread
-            self.start_loading()
-            thread = threading.Thread(target=self.process_branch_conversation, args=(branch_id,))
-            thread.daemon = True
-            thread.start()
+            # Trigger AI response processing for this branch
+            if hasattr(self, 'process_branch_conversation'):
+                # Add a small delay to ensure UI updates first
+                QTimer.singleShot(100, lambda: self.process_branch_conversation(branch_id))
+            
+            # Return branch ID
+            return branch_id
             
         except Exception as e:
             print(f"Error creating branch: {e}")
-            self.append_text(f"\nError creating branch: {str(e)}\n")
-
-    def get_all_tree_items(self, parent=''):
-        """Get all items in the tree recursively"""
-        items = list(self.network_view.nodes.keys())
-        for item in items.copy():
-            items.extend(self.get_all_tree_items(item))
-        return items
-
-    def update_branch_visuals(self):
-        """Update visual indicators for branches"""
-        self.network_view.selected_node = self.active_branch
-        self.network_view.redraw()
-
-    def on_branch_select(self, event):
-        """Handle branch selection in network view"""
-        selected_node = self.network_view.selected_node
-        if selected_node == 'main':
-            # Switch to main conversation
-            self.active_branch = None
-            self.display_conversation(self.conversation, self.text_area)
-        else:
-            # Switch to selected branch
-            branch_data = self.branch_conversations.get(selected_node)
-            if branch_data:
-                self.active_branch = selected_node
-                self.display_conversation(branch_data['conversation'], self.text_area)
-        
-        # Update visual indicators
-        self.update_branch_visuals()
-
+            self.statusBar().showMessage(f"Error creating branch: {e}")
+            return None
+    
     def get_branch_path(self, branch_id):
         """Get the full path of branch names from root to the given branch"""
-        path = []
-        current_id = branch_id
-        while current_id != 'main':
-            branch_data = self.branch_conversations.get(current_id)
-            if not branch_data:
-                break
-            path.append(branch_data['selected_text'])
-            current_id = branch_data['parent_id']
-        path.append('Seed')
-        return ' → '.join(reversed(path))
-
-    def fork_from_selection(self):
-        """Create a new conversation branch that continues forward from the selected text"""
         try:
-            if self.text_area.tag_ranges("sel"):
-                selected_text = self.text_area.get("sel.first", "sel.last")
-                selection_index = self.text_area.index("sel.first")
-                print(f"Forking from: {selected_text} at position {selection_index}")
-                self.create_fork(selected_text, selection_index)
-        except tk.TclError:
-            pass
-
-    def create_fork(self, selected_text, selection_index, parent_branch=None):
-        """Create a new branch that continues the conversation forward from the selected point"""
-        try:
-            # Generate a unique branch ID
-            branch_id = f"fork_{len(self.branch_conversations)}"
+            path = []
+            current_id = branch_id
             
-            # Determine parent and context
-            if self.active_branch:
-                parent_id = self.active_branch
-                parent_data = self.branch_conversations[self.active_branch]
-                # Get context up to and including the selected text
-                selected_with_context = self.text_area.get('1.0', selection_index) + selected_text
-                # Calculate depth based on network view's depth tracking
-                parent_depth = self.network_view.get_node_depth(parent_id)
-                branch_depth = parent_depth + 1
-            else:
-                parent_id = 'main'
-                # Get context up to and including the selected text
-                selected_with_context = self.text_area.get('1.0', selection_index) + selected_text
-                branch_depth = 1
+            # Prevent potential infinite loops by tracking visited branches
+            visited = set()
             
-            # Store branch data
-            self.branch_conversations[branch_id] = {
-                'history': selected_with_context,  # Use truncated version for history
-                'selected_text': selected_text,
-                'selected_with_context': selected_with_context,
-                'conversation': [],
-                'turn_count': 0,
-                'parent_id': parent_id,
-                'depth': branch_depth,
-                'children': [],
-                'type': 'fork'  # Mark this as a fork branch
-            }
+            while current_id != 'main' and current_id not in visited:
+                visited.add(current_id)
+                branch_data = self.branch_conversations.get(current_id)
+                if not branch_data:
+                    break
+                    
+                # Get a readable version of the selected text (truncated if needed)
+                selected_text = branch_data.get('selected_text', '')
+                if selected_text:
+                    display_text = f"{selected_text[:20]}{'...' if len(selected_text) > 20 else ''}"
+                    path.append(display_text)
+                else:
+                    path.append(f"{branch_data.get('type', 'Branch').capitalize()}")
+                
+                # Check for valid parent attribute
+                current_id = branch_data.get('parent')
+                if not current_id:
+                    break
             
-            # Update parent's children list
-            if parent_id != 'main':
-                self.branch_conversations[parent_id]['children'].append(branch_id)
-            
-            # Add node to network view
-            display_text = selected_text[:40] + "..." if len(selected_text) > 40 else selected_text
-            self.network_view.add_node(branch_id, display_text, "fork", parent_id)
-            
-            # Switch to this branch immediately
-            self.active_branch = branch_id
-            self.update_branch_visuals()
-            
-            # Add initial message and display it
-            self.branch_conversations[branch_id]['conversation'].append({
-                "role": "user",
-                "content": f"Complete this thought or sentence naturally, continuing forward from exactly this point: '{selected_text}'",
-                "display": f"🔱 Forking forward from '{selected_text}'"
-            })
-            self.display_conversation(
-                self.branch_conversations[branch_id]['conversation'],
-                self.text_area
-            )
-            
-            # Start processing in a separate thread
-            self.start_loading()
-            thread = threading.Thread(target=self.process_branch_conversation, args=(branch_id,))
-            thread.daemon = True
-            thread.start()
-            
+            path.append('Seed')
+            return ' → '.join(reversed(path))
         except Exception as e:
-            print(f"Error creating fork: {e}")
-            self.append_text(f"\nError creating fork: {str(e)}\n")
+            print(f"Error building branch path: {e}")
+            return f"Branch {branch_id}"
+    
+    def save_splitter_state(self):
+        """Save the current splitter state to a file"""
+        try:
+            # Create settings directory if it doesn't exist
+            if not os.path.exists('settings'):
+                os.makedirs('settings')
+                
+            # Save splitter state to file
+            with open('settings/splitter_state.json', 'w') as f:
+                json.dump({
+                    'sizes': self.splitter.sizes()
+                }, f)
+        except Exception as e:
+            print(f"Error saving splitter state: {e}")
+    
+    def restore_splitter_state(self):
+        """Restore the splitter state from a file if available"""
+        try:
+            if os.path.exists('settings/splitter_state.json'):
+                with open('settings/splitter_state.json', 'r') as f:
+                    state = json.load(f)
+                    if 'sizes' in state:
+                        self.splitter.setSizes(state['sizes'])
+        except Exception as e:
+            print(f"Error restoring splitter state: {e}")
+            # Fall back to default sizes
+            total_width = self.width()
+            self.splitter.setSizes([int(total_width * 0.7), int(total_width * 0.3)])
 
-def create_gui():
-    root = tk.Tk()
-    return AIGUI(root)
+    def process_branch_conversation(self, branch_id):
+        """Process the branch conversation using the selected models"""
+        # This method will be implemented in main.py to avoid circular imports
+        pass
 
-def run_gui(gui):
-    gui.master.mainloop()
+    def node_clicked(self, node_id):
+        """Handle node click in the network view"""
+        print(f"Node clicked: {node_id}")
+        
+        # Check if this is the main conversation or a branch
+        if node_id == 'main':
+            # Switch to main conversation
+            self.active_branch = None
+            self.left_pane.display_conversation(self.main_conversation)
+        elif node_id in self.branch_conversations:
+            # Switch to branch conversation
+            self.active_branch = node_id
+            branch_data = self.branch_conversations[node_id]
+            conversation = branch_data['conversation']
+            
+            # Filter hidden messages for display
+            visible_conversation = [msg for msg in conversation if not msg.get('hidden', False)]
+            self.left_pane.display_conversation(visible_conversation, branch_data)
+
+    def initialize_selectors(self):
+        """Initialize the AI model selectors and prompt pair selector"""
+        pass
+
+    # Removed: create_new_living_document

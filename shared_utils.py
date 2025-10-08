@@ -14,6 +14,11 @@ from anthropic import Anthropic
 import base64
 from together import Together
 from openai import OpenAI
+import re
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    print("BeautifulSoup not found. Please install it with 'pip install beautifulsoup4'")
 
 # Load environment variables
 load_dotenv()
@@ -21,124 +26,76 @@ load_dotenv()
 # Initialize Anthropic client with API key
 anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
-def call_claude_api(prompt, conversation_history, model, system_prompt):
+# Initialize OpenAI client
+openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
+def call_claude_api(prompt, messages, model_id, system_prompt=None):
+    """Call the Claude API with the given messages and prompt"""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return "Error: ANTHROPIC_API_KEY not found in environment variables"
+    
+    url = "https://api.anthropic.com/v1/messages"
+    
+    # Ensure we have a system prompt
+    payload = {
+        "model": model_id,
+        "max_tokens": 4000,
+        "temperature": 1        
+    }
+    
+    # Set system if provided
+    if system_prompt:
+        payload["system"] = system_prompt
+        print(f"CLAUDE API USING SYSTEM PROMPT: {system_prompt}")
+    
+    # Clean messages to remove duplicates
+    filtered_messages = []
+    seen_contents = set()
+    
+    for msg in messages:
+        # Skip system messages (handled separately)
+        if msg.get("role") == "system":
+            continue
+            
+        # Check for duplicates by content
+        content = msg.get("content", "")
+        if content in seen_contents:
+            print(f"Skipping duplicate message in API call: {content[:30]}...")
+            continue
+            
+        seen_contents.add(content)
+        filtered_messages.append(msg)
+    
+    # Add the current prompt as the final user message
+    filtered_messages.append({
+        "role": "user",
+        "content": prompt
+    })
+
+    # Add filtered messages to payload
+    payload["messages"] = filtered_messages
+    
+    # Actual API call
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01"
+    }
+    
     try:
-        client = Anthropic(
-            api_key=os.environ['ANTHROPIC_API_KEY']
-        )
-        
-        formatted_messages = []
-        
-        # Convert conversation history to text-only messages
-        for msg in conversation_history:
-            # If the message contains a list of content (might include images)
-            if isinstance(msg.get('content'), list):
-                # Extract only the text content
-                text_parts = []
-                for item in msg['content']:
-                    if item.get('type') == 'text':
-                        text = item.get('text', '')
-                        if isinstance(text, str):
-                            text_parts.append(text)
-                
-                if text_parts:
-                    formatted_messages.append({
-                        "role": msg["role"],
-                        "content": " ".join(text_parts)
-                    })
-                    
-                    # If this was a Flux message, add context about the image
-                    if msg.get('prompt'):
-                        formatted_messages.append({
-                            "role": msg["role"],
-                            "content": f"(The image was generated based on this prompt: {msg['prompt']})"
-                        })
-            # Handle display field for Chain of Thought
-            elif msg.get('display'):
-                formatted_messages.append({
-                    "role": msg["role"],
-                    "content": msg["display"]
-                })
-            # Regular text message
-            elif isinstance(msg.get('content'), str):
-                formatted_messages.append({
-                    "role": msg["role"],
-                    "content": msg["content"]
-                })
-            
-        # Add the current prompt with the latest image
-        try:
-            # Find the most recent image from Flux responses
-            image_path = None
-            for msg in reversed(conversation_history):
-                if isinstance(msg, dict) and msg.get('image_path'):
-                    image_path = msg['image_path']
-                    break
-            
-            if image_path and Path(image_path).exists():
-                with open(image_path, "rb") as image_file:
-                    # Read image bytes and encode properly
-                    image_bytes = image_file.read()
-                    image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-                    
-                    # Add the current prompt with image
-                    formatted_messages.append({
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": "image/jpeg",
-                                    "data": image_base64
-                                }
-                            },
-                            {
-                                "type": "text",
-                                "text": prompt
-                            }
-                        ]
-                    })
-            else:
-                # If no image found, just add the prompt as text
-                formatted_messages.append({
-                    "role": "user",
-                    "content": prompt
-                })
-        except Exception as img_error:
-            print(f"Error processing image: {img_error}")
-            formatted_messages.append({
-                "role": "user",
-                "content": prompt
-            })
-
-        print("\nSending to Claude:")
-        # Create debug version of messages without base64 data
-        debug_messages = formatted_messages.copy()
-        for msg in debug_messages:
-            if isinstance(msg.get('content'), list):
-                for part in msg['content']:
-                    if part.get('type') == 'image':
-                        part['source']['data'] = '[BASE64_IMAGE_DATA]'
-        print(f"Messages: {json.dumps(debug_messages, indent=2)}")
-
-        # Make the API call
-        response = client.messages.create(
-            model=model,
-            max_tokens=4000,
-            system=system_prompt,
-            messages=formatted_messages
-        )
-        
-        # Extract the text content from the response
-        if response and hasattr(response, 'content'):
-            return response.content[0].text if isinstance(response.content, list) else str(response.content)
-        return None
-
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        if 'content' in data and len(data['content']) > 0:
+            for content_item in data['content']:
+                if content_item.get('type') == 'text':
+                    return content_item.get('text', '')
+            # Fallback if no text type content is found
+            return str(data['content'])
+        return "No content in response"
     except Exception as e:
-        print(f"Error calling Claude API: {e}")
-        print(f"Messages structure: {json.dumps(debug_messages, indent=2)}")  # Debug print
-        return None
+        return f"Error calling Claude API: {str(e)}"
 
 def call_llama_api(prompt, conversation_history, model, system_prompt):
     # Only use the last 3 exchanges to prevent context length issues
@@ -198,7 +155,7 @@ def call_openai_api(prompt, conversation_history, model, system_prompt):
             # Increase max_tokens and add n parameter
             max_tokens=4000,
             n=1,
-            temperature=0.8,
+            temperature=1,
             stream=True
         )
         
@@ -374,39 +331,81 @@ def call_deepseek_api(prompt, conversation_history, model, system_prompt):
             "deepseek-ai/deepseek-r1",
             input={
                 "prompt": formatted_history,
-                "max_tokens": 4000,
-                "temperature": 0.7
+                "max_tokens": 8000,
+                "temperature": 1
             }
         )
         
-        # Collect the response
-        response_text = ''.join(output)
+        # Collect the response - ensure we get the full output
+        response_text = ""
+        if isinstance(output, list):
+            # Join all chunks to get the complete response
+            response_text = ''.join(output)
+        else:
+            # If output is not a list, convert to string
+            response_text = str(output)
+            
         print(f"\nRaw Response: {response_text}")
         
-        # Try to extract reasoning from <think> tags in content
-        reasoning = None
-        content = response_text
+        # Check for HTML contribution marker
+        html_contribution = None
+        conversation_part = response_text
         
-        if content:
-            import re
-            # Try both <think> and <thinking> tags
-            think_match = re.search(r'<(think|thinking)>(.*?)</\1>', content, re.DOTALL | re.IGNORECASE)
-            if think_match:
-                reasoning = think_match.group(2).strip()
-                # Remove the thinking section from the content
-                content = re.sub(r'<(think|thinking)>.*?</\1>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+        # Use more lenient pattern matching - just look for "HTML CONTRIBUTION" anywhere
+        import re
+        html_contribution_match = re.search(r'(?i)[-_\s]*HTML\s*CONTRIBUTION[-_\s]*', response_text)
+        if html_contribution_match:
+            parts = re.split(r'(?i)[-_\s]*HTML\s*CONTRIBUTION[-_\s]*', response_text, 1)
+            if len(parts) > 1:
+                conversation_part = parts[0].strip()
+                html_contribution = parts[1].strip()
+                print(f"Found HTML contribution with lenient pattern: {html_contribution[:100]}...")
         
-        # Format the response with both CoT and final answer
-        display_text = ""
-        if reasoning:
-            display_text += f"[Chain of Thought]\n{reasoning}\n\n"
-        if content:
-            display_text += f"[Final Answer]\n{content}"
-            
-        return {
-            "display": display_text,
-            "content": content
+        # Initialize result with content
+        result = {
+            "content": conversation_part
         }
+        
+        # Only extract and format chain of thought if SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT is True
+        from config import SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT
+        if SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT:
+            # Try to extract reasoning from <think> tags in content
+            reasoning = None
+            content = conversation_part
+            
+            if content:
+                # Try both <think> and <thinking> tags
+                think_match = re.search(r'<(think|thinking)>(.*?)</\1>', content, re.DOTALL | re.IGNORECASE)
+                if think_match:
+                    reasoning = think_match.group(2).strip()
+                    # Remove the thinking section from the content
+                    content = re.sub(r'<(think|thinking)>.*?</\1>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+            
+            # Format the response with both CoT and final answer
+            display_text = ""
+            if reasoning:
+                display_text += f"[Chain of Thought]\n{reasoning}\n\n"
+            if content:
+                display_text += f"[Final Answer]\n{content}"
+            
+            # Add display field to result
+            result["display"] = display_text
+            # Update content to be the cleaned version without thinking tags
+            result["content"] = content
+        else:
+            # If not showing chain of thought, just use the raw content
+            # Still clean up any thinking tags from the content
+            content = conversation_part
+            if content:
+                # Remove any thinking tags from the content
+                content = re.sub(r'<(think|thinking)>.*?</\1>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+                result["content"] = content
+        
+        # Add HTML contribution if found
+        if html_contribution:
+            result["html_contribution"] = html_contribution
+            
+        return result
         
     except Exception as e:
         print(f"Error calling DeepSeek via Replicate: {e}")
@@ -590,4 +589,64 @@ def call_together_api(prompt, conversation_history, model, system_prompt):
     except Exception as e:
         print(f"Error calling Together API: {str(e)}")
         return None
+
+def read_shared_html(*args, **kwargs):
+    return ""
+
+def update_shared_html(*args, **kwargs):
+    return False
+
+def open_html_in_browser(file_path="conversation_full.html"):
+    import webbrowser, os
+    full_path = os.path.abspath(file_path)
+    webbrowser.open('file://' + full_path)
+
+def create_initial_living_document(*args, **kwargs):
+    return ""
+
+def read_living_document(*args, **kwargs):
+    return ""
+
+def process_living_document_edits(result, model_name):
+    return result
+
+def generate_image_from_text(text, model="gpt-image-1"):
+    """Generate an image based on text using OpenAI's image generation API"""
+    try:
+        # Create a directory for the images if it doesn't exist
+        image_dir = Path("images")
+        image_dir.mkdir(exist_ok=True)
+        
+        # Create a timestamp for the image filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Generate the image
+        result = openai_client.images.generate(
+            model=model,
+            prompt=text,
+            n=1,  # Generate 1 image
+        )
+        
+        # Get the base64 encoded image
+        image_base64 = result.data[0].b64_json
+        image_bytes = base64.b64decode(image_base64)
+        
+        # Save the image to a file
+        image_path = image_dir / f"generated_{timestamp}.png"
+        with open(image_path, "wb") as f:
+            f.write(image_bytes)
+        
+        print(f"Generated image saved to {image_path}")
+        
+        return {
+            "success": True,
+            "image_path": str(image_path),
+            "timestamp": timestamp
+        }
+    except Exception as e:
+        print(f"Error generating image: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
