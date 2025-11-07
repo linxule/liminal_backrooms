@@ -991,7 +991,7 @@ class ControlPanel(QWidget):
             }}
         """)
         
-        # View HTML button (removed)
+        # View HTML button (light theme)
         self.view_html_button = QPushButton("View HTML")
         self.view_html_button.setStyleSheet(f"""
             QPushButton {{
@@ -1012,9 +1012,10 @@ class ControlPanel(QWidget):
                 background-color: {COLORS['accent_blue_active']};
             }}
         """)
-        self.view_html_button.clicked.connect(lambda: open_html_in_browser("shared_document.html"))
-        
-        # View Full HTML button
+        self.view_html_button.setToolTip("View the conversation in light mode")
+        self.view_html_button.clicked.connect(lambda: self.open_html_document("shared_document.html", "HTML"))
+
+        # View Full HTML button (dark theme)
         self.view_full_html_button = QPushButton("View Dark HTML")
         self.view_full_html_button.setStyleSheet(f"""
             QPushButton {{
@@ -1035,8 +1036,8 @@ class ControlPanel(QWidget):
                 background-color: #1a1a1a;
             }}
         """)
-        self.view_full_html_button.setToolTip("View the full conversation in dark mode with greentext styling")
-        self.view_full_html_button.clicked.connect(lambda: open_html_in_browser("conversation_full.html"))
+        self.view_full_html_button.setToolTip("View the conversation in dark mode with greentext styling")
+        self.view_full_html_button.clicked.connect(lambda: self.open_html_document("conversation_full.html", "Dark HTML"))
         
         # Removed: View Living Document button
         
@@ -1099,10 +1100,38 @@ class ControlPanel(QWidget):
         self.ai2_model_selector.clear()
         self.ai1_model_selector.addItems(list(AI_MODELS.keys()))
         self.ai2_model_selector.addItems(list(AI_MODELS.keys()))
-        
+
         # Add prompt pairs
         self.prompt_pair_selector.clear()
         self.prompt_pair_selector.addItems(list(SYSTEM_PROMPT_PAIRS.keys()))
+
+    def open_html_document(self, filename, display_name):
+        """Open HTML document with proper error handling"""
+        import os
+
+        if not os.path.exists(filename):
+            # Show warning dialog
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.setWindowTitle("HTML Not Generated")
+            msg.setText(f"The {display_name} document hasn't been generated yet.")
+            msg.setInformativeText("Please run at least one conversation turn by clicking 'Propagate' first.")
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.exec()
+            return
+
+        # File exists, open it
+        try:
+            open_html_in_browser(filename)
+        except Exception as e:
+            # Show error dialog
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Icon.Critical)
+            msg.setWindowTitle("Error Opening HTML")
+            msg.setText(f"Failed to open {display_name}")
+            msg.setInformativeText(str(e))
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.exec()
 
 class ConversationContextMenu(QMenu):
     """Context menu for the conversation display"""

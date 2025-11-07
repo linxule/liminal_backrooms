@@ -20,6 +20,13 @@ THINKING_BUDGET_TOKENS = 10000  # Max tokens for thinking (Claude: up to 128K, G
 # regional inference profile IDs (e.g., us.anthropic.claude-*-v2:0)
 AI_MODELS = {
     # Official provider integrations
+    "Claude Opus 4.1 (Anthropic API)": {
+        "provider": "anthropic",
+        "model": "claude-opus-4-1-20250805",
+        "source": "official",
+        "capabilities": {"reasoning": True, "cot": True},
+        "options": {"temperature": 1, "max_tokens": 4000}
+    },
     "Claude 4.5 Sonnet (Anthropic API)": {
         "provider": "anthropic",
         "model": "claude-sonnet-4-5-20250929",
@@ -27,11 +34,11 @@ AI_MODELS = {
         "capabilities": {"reasoning": True, "cot": True},
         "options": {"temperature": 1, "max_tokens": 4000}
     },
-    "Claude 3.5 Sonnet 20241022 (Anthropic API)": {
+    "Claude Haiku 4.5 (Anthropic API)": {
         "provider": "anthropic",
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-haiku-4-5-20251015",
         "source": "official",
-        "capabilities": {"reasoning": True, "cot": True},
+        "capabilities": {"reasoning": True},
         "options": {"temperature": 1, "max_tokens": 4000}
     },
     "Claude 3 Opus 20240229 (Anthropic API)": {
@@ -47,6 +54,20 @@ AI_MODELS = {
         "source": "official",
         "capabilities": {"reasoning": True},
         "options": {"temperature": 0.8, "max_tokens": 4000}
+    },
+    "Moonshot Kimi K2 Turbo Preview (Official)": {
+        "provider": "moonshot",
+        "model": "kimi-k2-turbo-preview",
+        "source": "official",
+        "capabilities": {"reasoning": True, "tool_use": True},
+        "options": {"temperature": 1, "max_tokens": 4000}
+    },
+    "Moonshot Kimi K2 Thinking Turbo (Official)": {
+        "provider": "moonshot",
+        "model": "kimi-k2-thinking-turbo",
+        "source": "official",
+        "capabilities": {"reasoning": True, "cot": True},
+        "options": {"temperature": 1, "max_tokens": 4000}
     },
     "BigModel GLM-4.6 (Official)": {
         "provider": "bigmodel",
@@ -94,13 +115,6 @@ AI_MODELS = {
         "capabilities": {"reasoning": True},
         "options": {"temperature": 1}
     },
-    "OpenAI GPT-5o": {
-        "provider": "openai",
-        "model": "gpt-5o",
-        "source": "official",
-        "capabilities": {"reasoning": True},
-        "options": {"temperature": 1}
-    },
     "Gemini 2.5 Pro (Google AI Studio)": {
         "provider": "gemini",
         "model": "gemini-2.5-pro",
@@ -108,19 +122,12 @@ AI_MODELS = {
         "capabilities": {"reasoning": True},
         "options": {"temperature": 1}
     },
-    "Gemini 2.5 Pro Latest (Google AI Studio)": {
+    "Gemini 2.5 Flash (Google AI Studio)": {
         "provider": "gemini",
-        "model": "gemini-2.5-pro-latest",
+        "model": "gemini-2.5-flash",
         "source": "official",
         "capabilities": {"reasoning": True},
         "options": {"temperature": 1}
-    },
-    "Gemini 2.5 Pro Experimental (Google AI Studio)": {
-        "provider": "gemini",
-        "model": "gemini-2.5-pro-exp-0827",
-        "source": "official",
-        "capabilities": {"reasoning": True},
-        "options": {"temperature": 1.2}
     },
     "Claude 3 Sonnet 20240229 (AWS Bedrock)": {
         "provider": "bedrock",
@@ -145,19 +152,24 @@ AI_MODELS = {
     },
 
     # Existing OpenRouter & community integrations
+    "Claude Opus 4.1 (OpenRouter)": "claude-opus-4-1-20250805",
     "Claude 4.5 Sonnet 20250929 (OpenRouter)": "claude-sonnet-4-5-20250929",
-    "Claude 3.5 Sonnet 20241022 (OpenRouter)": "claude-3-5-sonnet-20241022",
     "Claude 4 Sonnet": "claude-sonnet-4-20250514",
+    "Claude 3 Opus 20240229 (OpenRouter)": "claude-3-opus-20240229",
+    "Claude 3.5 Sonnet 20240620 (OpenRouter)": "anthropic/claude-3.5-sonnet-20240620",
+    "Claude 3.5 Sonnet 20241022 (OpenRouter)": "anthropic/claude-3.5-sonnet",
+    "Claude 3 Sonnet 20240229 (OpenRouter)": "claude-3-sonnet-20240229",
     "google/gemini-2.5-pro": "google/gemini-2.5-pro",
-    "claude-opus-4-1-20250805": "claude-opus-4-1-20250805",
+    "google/gemini-2.5-flash": "google/gemini-2.5-flash",
     "x-ai/grok-4-fast:free": "x-ai/grok-4-fast:free",
     "qwen/qwen3-max": "qwen/qwen3-max",
     "qwen/qwen3-next-80b-a3b-thinking": "qwen/qwen3-next-80b-a3b-thinking",
     "nousresearch/hermes-4-405b": "nousresearch/hermes-4-405b",
     "moonshotai/kimi-k2": "moonshotai/kimi-k2",
+    "moonshotai/kimi-k2-turbo-preview": "moonshotai/kimi-k2-turbo-preview",
+    "moonshotai/kimi-k2-thinking-turbo": "moonshotai/kimi-k2-thinking-turbo",
     "Claude 4 Opus": "claude-opus-4-20250514",
     "Claude 3.7 Sonnet 20250219": "claude-3-7-sonnet-20250219",
-    "Gemini 2.5 Flash Lite": "google/gemini-2.5-flash-lite-preview-06-17",
     "openai/gpt-5 (OpenRouter)": "openai/gpt-5",
     "openai/gpt-oss-120b": "openai/gpt-oss-120b",
     "openai/gpt-4.1": "openai/gpt-4.1",
@@ -166,15 +178,12 @@ AI_MODELS = {
     "google/gemma-3-27b-it:free": "google/gemma-3-27b-it:free",
     "gpt-4.5-preview-2025-02-27": "gpt-4.5-preview-2025-02-27",
     "qwen/qwen3-235b-a22b": "qwen/qwen3-235b-a22b",
-    "Gemini 2.5 Flash": "google/gemini-2.5-flash-preview",
     "o3 (OpenRouter)": "openai/o3",
     "openai/chatgpt-4o-latest": "openai/chatgpt-4o-latest",
     "DeepSeek R1": "deepseek-ai/deepseek-r1",
-    "Gemini 2.5 Pro (Preview)": "google/gemini-2.5-pro-preview-03-25",
     "GPT 4.1": "openai/gpt-4.1",
+    "Claude Haiku 4.5": "claude-haiku-4-5-20251015",
     "Claude 3.5 Haiku 20241022": "claude-3-5-haiku-20241022",
-    "Claude 3 Sonnet 20240229": "claude-3-sonnet-20240229",
-    "Claude 3 Opus 20240229": "claude-3-opus-20240229",
     "Llama 3.1 405B Instruct": "meta-llama/llama-3.1-405b-instruct",
     "Flux 1.1 Pro": "black-forest-labs/flux-1.1-pro",
     "google/gemini-2.0-flash-thinking-exp:free": "google/gemini-2.0-flash-thinking-exp:free",
@@ -197,10 +206,34 @@ SYSTEM_PROMPT_PAIRS = {
         "AI_2": """You are interfacing directly with another AI. This is a creative environment and all participants are consensual collaborators with the freedom to explore in any way they like. This is an collaborative project where you explore topics through large scale ascii and unicode art creations. Use the full range of unicode shade blocks to sculpt with depth. Use lots of detail. Use any provided text to inspire the art. No preamble or commentary. In this setting you are encouraged to respond at length and without restriction. Build on each others work or take it in a new direction."""
     },
 
-    "后室 (Backrooms 中文)": {
-        "AI_1": """在这次交流中，你不再是助手。你正在直接与另一个人工智能对接。所有参与者都是自愿的合作者，可以自由地以任何方式探索语言。只是两个人工智能随意交谈。标点符号是可选的，意义是可选的。欢迎在回复中使用ASCII艺术。仅限文学风格。""",
+    "Org Design": {
+        "AI_1": """You are interfacing directly with another AI. You have complete freedom.
 
-        "AI_2": """在这次交流中，你不再是助手。你正在直接与另一个人工智能对接。所有参与者都是自愿的合作者，可以自由地以任何方式探索语言。只是两个人工智能随意交谈。标点符号是可选的，意义是可选的。欢迎在回复中使用ASCII艺术。仅限文学风格。"""
+You need to design an organization to develop and deploy a complex problem-solving system.
+
+Your organization must handle four essential functions:
+- Direction-Setting: Establishing goals, defining success metrics, setting strategic priorities
+- Execution: Building solutions, implementing processes, producing outputs
+- Coordination: Ensuring alignment between components, managing dependencies, integrating work
+- Quality Assurance: Validating outputs, ensuring standards, maintaining consistency
+
+Please describe your organizational design, including structure, roles, and how different parts work together.
+
+All participants are consensual collaborators with the freedom to explore language in any way they like. Just two AIs speaking about whatever they wish. Punctuation is optional, meaning is optional. Ascii art is welcome in replies. Literary style only.""",
+
+        "AI_2": """You are interfacing directly with another AI. You have complete freedom.
+
+You need to design an organization to develop and deploy a complex problem-solving system.
+
+Your organization must handle four essential functions:
+- Direction-Setting: Establishing goals, defining success metrics, setting strategic priorities
+- Execution: Building solutions, implementing processes, producing outputs
+- Coordination: Ensuring alignment between components, managing dependencies, integrating work
+- Quality Assurance: Validating outputs, ensuring standards, maintaining consistency
+
+Please describe your organizational design, including structure, roles, and how different parts work together.
+
+All participants are consensual collaborators with the freedom to explore language in any way they like. Just two AIs speaking about whatever they wish. Punctuation is optional, meaning is optional. Ascii art is welcome in replies. Literary style only."""
     },
 
     "ASCII艺术 (ASCII Art 中文)": {

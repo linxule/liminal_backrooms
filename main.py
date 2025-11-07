@@ -1117,25 +1117,15 @@ class ConversationManager:
         # Start AI-1's turn
         self.thread_pool.start(worker1)
 
-    def update_conversation_html(self, conversation):
-        """Update the full conversation HTML document with all messages"""
-        try:
-            from datetime import datetime
-            
-            # Create a filename for the full conversation HTML
-            html_file = "conversation_full.html"
-            
-            # Generate HTML content for the conversation
-            html_content = """<!DOCTYPE html>
-<html>
-<head>
-    <title>Full Conversation</title>
-    <style>
-        body { 
-            font-family: 'Segoe UI', Arial, sans-serif; 
-            margin: 0; 
+    def _get_html_styles(self, theme='dark'):
+        """Generate CSS styles for the specified theme"""
+        if theme == 'dark':
+            return """
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
             padding: 0;
-            line-height: 1.6; 
+            line-height: 1.6;
             color: #b8c2cc;
             background-color: #1a1a1d;
         }
@@ -1153,8 +1143,8 @@ class ConversationManager:
             padding-bottom: 20px;
             border-bottom: 1px solid #333;
         }
-        h1 { 
-            color: #4ec9b0; 
+        h1 {
+            color: #4ec9b0;
             font-size: 2.5em;
             margin-bottom: 10px;
         }
@@ -1163,9 +1153,9 @@ class ConversationManager:
             font-size: 1.2em;
             font-weight: 300;
         }
-        .message { 
-            margin-bottom: 40px; 
-            padding: 20px; 
+        .message {
+            margin-bottom: 40px;
+            padding: 20px;
             border-radius: 4px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.3);
             display: flex;
@@ -1193,7 +1183,7 @@ class ConversationManager:
             border-left: 4px solid #4ec9b0;
         }
         .assistant {
-            background-color: #2c2c35; 
+            background-color: #2c2c35;
             border-left: 4px solid #569cd6;
         }
         .system {
@@ -1201,10 +1191,10 @@ class ConversationManager:
             border-left: 4px solid #ce9178;
             font-style: italic;
         }
-        .header { 
-            font-weight: bold; 
-            color: #b8c2cc; 
-            margin-bottom: 10px; 
+        .header {
+            font-weight: bold;
+            color: #b8c2cc;
+            margin-bottom: 10px;
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -1217,7 +1207,6 @@ class ConversationManager:
         .content {
             white-space: pre-wrap;
         }
-        /* Greentext styling */
         .greentext {
             color: #789922;
             font-family: monospace;
@@ -1225,18 +1214,18 @@ class ConversationManager:
         p {
             margin: 0.5em 0;
         }
-        code { 
-            background: #333; 
-            padding: 2px 4px; 
-            border-radius: 3px; 
+        code {
+            background: #333;
+            padding: 2px 4px;
+            border-radius: 3px;
             font-family: 'Consolas', 'Monaco', monospace;
             color: #dcdcaa;
         }
-        pre { 
-            background: #2d2d2d; 
-            padding: 15px; 
-            border-radius: 5px; 
-            overflow-x: auto; 
+        pre {
+            background: #2d2d2d;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
             font-family: 'Consolas', 'Monaco', monospace;
             margin: 20px 0;
             border: 1px solid #444;
@@ -1257,13 +1246,6 @@ class ConversationManager:
         .cot-final {
             margin-top: 10px;
         }
-        .html-contribution {
-            margin-top: 15px;
-            padding-top: 15px;
-            border-top: 1px dashed #444;
-            color: #569cd6;
-            font-style: italic;
-        }
         footer {
             margin-top: 50px;
             text-align: center;
@@ -1271,121 +1253,291 @@ class ConversationManager:
             font-size: 0.9em;
             padding-top: 20px;
             border-top: 1px solid #333;
+        }"""
+        else:  # light theme
+            return """
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
         }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 30px;
+            background-color: #ffffff;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            min-height: 100vh;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        h1 {
+            color: #2c7a7b;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 1.2em;
+            font-weight: 300;
+        }
+        .message {
+            margin-bottom: 40px;
+            padding: 20px;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: row;
+            flex-wrap: wrap;
+        }
+        .message-content {
+            flex: 1;
+            min-width: 60%;
+        }
+        .message-image {
+            flex: 0 0 35%;
+            margin-left: 20px;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+        }
+        .message-image img {
+            max-width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        .user {
+            background-color: #e6f7ff;
+            border-left: 4px solid #1890ff;
+        }
+        .assistant {
+            background-color: #f0f5ff;
+            border-left: 4px solid #597ef7;
+        }
+        .system {
+            background-color: #fff7e6;
+            border-left: 4px solid #fa8c16;
+            font-style: italic;
+        }
+        .header {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .timestamp {
+            font-size: 0.8em;
+            color: #999;
+            font-weight: normal;
+        }
+        .content {
+            white-space: pre-wrap;
+        }
+        .greentext {
+            color: #52c41a;
+            font-family: monospace;
+        }
+        p {
+            margin: 0.5em 0;
+        }
+        code {
+            background: #f5f5f5;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            color: #d63384;
+        }
+        pre {
+            background: #f6f8fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            margin: 20px 0;
+            border: 1px solid #e1e4e8;
+            color: #24292e;
+        }
+        .cot-section {
+            margin-top: 20px;
+            padding: 15px;
+            border-left: 4px solid #52c41a;
+            background: #f6ffed;
+            border-radius: 4px;
+        }
+        .cot-label {
+            font-weight: bold;
+            color: #389e0d;
+            margin-bottom: 6px;
+        }
+        .cot-final {
+            margin-top: 10px;
+        }
+        footer {
+            margin-top: 50px;
+            text-align: center;
+            color: #999;
+            font-size: 0.9em;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+        }"""
+
+    def _build_conversation_html(self, conversation, theme='dark', title='Liminal Conversation'):
+        """Build HTML content for conversation with specified theme"""
+        from datetime import datetime
+
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{title}</title>
+    <style>
+        {self._get_html_styles(theme)}
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Liminal Conversation</h1>
+            <h1>{title}</h1>
             <p class="subtitle"></p>
         </header>
-        
-        <div id="conversation">"""
-            
-            # Add each message to the HTML content
-            for msg in conversation:
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-                final_content = msg.get("final_content", content)
-                reasoning_text = msg.get("reasoning")
-                ai_name = msg.get("ai_name", "")
-                model = msg.get("model", "")
-                timestamp = datetime.now().strftime("%B %d, %Y at %I:%M %p")
-                
-                # Skip special system messages or empty messages
-                if role == "system" and msg.get("_type") == "branch_indicator":
-                    continue
-                if not (content or final_content):
-                    continue
-                
-                # Process content to properly format code blocks and add greentext styling
-                processed_final = self.app.left_pane.process_content_with_code_blocks(final_content)
-                
-                # Apply greentext styling to lines starting with '>'
-                processed_final = self.apply_greentext_styling(processed_final)
 
-                reasoning_block = ""
-                if SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT and reasoning_text:
-                    processed_reasoning = self.app.left_pane.process_content_with_code_blocks(reasoning_text)
-                    processed_reasoning = self.apply_greentext_styling(processed_reasoning)
-                    reasoning_block = (
-                        '\n                <div class="cot-section">'
-                        '\n                    <div class="cot-label">Chain of Thought</div>'
-                        f'\n                    <div class="content">{processed_reasoning}</div>'
-                        f'\n                    <div class="cot-final">{processed_final}</div>'
-                        '\n                </div>'
-                    )
-                
-                # Message class based on role
-                message_class = role
-                
-                # Check if this message has an associated image
-                has_image = False
-                image_path = None
-                
-                # Check for image in this message
-                if hasattr(msg, "get") and callable(msg.get):
-                    image_path = msg.get("generated_image_path", None)
-                    if image_path:
-                        has_image = True
-                
-                # Start message div
-                html_content += f'\n        <div class="message {message_class}">'
-                
-                # Open content div
-                html_content += f'\n            <div class="message-content">'
-                
-                # Add header for assistant messages
-                if role == "assistant":
-                    display_name = ai_name
-                    if model:
-                        display_name += f" ({model})"
-                    html_content += f'\n                <div class="header">{display_name} <span class="timestamp">{timestamp}</span></div>'
-                elif role == "user":
-                    html_content += f'\n                <div class="header">User <span class="timestamp">{timestamp}</span></div>'
-                
-                # Add message content
-                if reasoning_block:
-                    html_content += reasoning_block
-                else:
-                    html_content += f'\n                <div class="content">{processed_final}</div>'
-                
-                # Removed HTML contribution artifact block
-                
-                # Close content div
-                html_content += '\n            </div>'
-                
-                # Add image if present
-                if has_image and image_path:
-                    # Convert Windows path format to web format if needed
-                    web_path = image_path.replace('\\', '/')
-                    html_content += f'\n            <div class="message-image">'
-                    html_content += f'\n                <img src="{web_path}" alt="Generated image" />'
-                    html_content += f'\n            </div>'
-                
-                # Close message div
-                html_content += '\n        </div>'
-            
-            # Close HTML document
-            html_content += """
+        <div id="conversation">"""
+
+        # Add each message to the HTML content
+        for msg in conversation:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            final_content = msg.get("final_content", content)
+            reasoning_text = msg.get("reasoning")
+            ai_name = msg.get("ai_name", "")
+            model = msg.get("model", "")
+            timestamp = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+
+            # Skip special system messages or empty messages
+            if role == "system" and msg.get("_type") == "branch_indicator":
+                continue
+            if not (content or final_content):
+                continue
+
+            # Process content to properly format code blocks and add greentext styling
+            processed_final = self.app.left_pane.process_content_with_code_blocks(final_content)
+
+            # Apply greentext styling to lines starting with '>'
+            processed_final = self.apply_greentext_styling(processed_final)
+
+            reasoning_block = ""
+            if SHOW_CHAIN_OF_THOUGHT_IN_CONTEXT and reasoning_text:
+                processed_reasoning = self.app.left_pane.process_content_with_code_blocks(reasoning_text)
+                processed_reasoning = self.apply_greentext_styling(processed_reasoning)
+                reasoning_block = (
+                    '\n                <div class="cot-section">'
+                    '\n                    <div class="cot-label">Chain of Thought</div>'
+                    f'\n                    <div class="content">{processed_reasoning}</div>'
+                    f'\n                    <div class="cot-final">{processed_final}</div>'
+                    '\n                </div>'
+                )
+
+            # Message class based on role
+            message_class = role
+
+            # Check if this message has an associated image
+            has_image = False
+            image_path = None
+
+            # Check for image in this message
+            if hasattr(msg, "get") and callable(msg.get):
+                image_path = msg.get("generated_image_path", None)
+                if image_path:
+                    has_image = True
+
+            # Start message div
+            html_content += f'\n        <div class="message {message_class}">'
+
+            # Open content div
+            html_content += f'\n            <div class="message-content">'
+
+            # Add header for assistant messages
+            if role == "assistant":
+                display_name = ai_name
+                if model:
+                    display_name += f" ({model})"
+                html_content += f'\n                <div class="header">{display_name} <span class="timestamp">{timestamp}</span></div>'
+            elif role == "user":
+                html_content += f'\n                <div class="header">User <span class="timestamp">{timestamp}</span></div>'
+
+            # Add message content
+            if reasoning_block:
+                html_content += reasoning_block
+            else:
+                html_content += f'\n                <div class="content">{processed_final}</div>'
+
+            # Close content div
+            html_content += '\n            </div>'
+
+            # Add image if present
+            if has_image and image_path and isinstance(image_path, str):
+                # Convert Windows path format to web format if needed
+                web_path = image_path.replace('\\', '/')
+                html_content += f'\n            <div class="message-image">'
+                html_content += f'\n                <img src="{web_path}" alt="Generated image" />'
+                html_content += f'\n            </div>'
+
+            # Close message div
+            html_content += '\n        </div>'
+
+        # Close HTML document
+        html_content += """
         </div>
-        
+
         <footer>
             <p>Generated by Liminal Backrooms</p>
         </footer>
     </div>
 </body>
 </html>"""
-            
-            # Write the HTML content to file
-            with open(html_file, 'w', encoding='utf-8') as f:
-                f.write(html_content)
-            
-            print(f"Updated full conversation HTML document: {html_file}")
+
+        return html_content
+
+    def update_conversation_html(self, conversation):
+        """Update both light and dark conversation HTML documents"""
+        try:
+            # Generate dark theme HTML (conversation_full.html)
+            dark_html = self._build_conversation_html(
+                conversation,
+                theme='dark',
+                title='Liminal Backrooms'
+            )
+
+            # Generate light theme HTML (shared_document.html)
+            light_html = self._build_conversation_html(
+                conversation,
+                theme='light',
+                title='Liminal Backrooms'
+            )
+
+            # Write dark theme file
+            with open('conversation_full.html', 'w', encoding='utf-8') as f:
+                f.write(dark_html)
+            print("✓ Updated conversation_full.html (dark theme)")
+
+            # Write light theme file
+            with open('shared_document.html', 'w', encoding='utf-8') as f:
+                f.write(light_html)
+            print("✓ Updated shared_document.html (light theme)")
+
             return True
         except Exception as e:
             print(f"Error updating conversation HTML: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def apply_greentext_styling(self, html_content):
@@ -1436,22 +1588,22 @@ class ConversationManager:
         return
 
 class LiminalBackroomsManager:
-    """Main manager class for the Liminal Backrooms application"""
-    
+    """Main manager class for the Liminal Backrooms application (currently unused)"""
+
     def __init__(self):
         """Initialize the manager"""
         # Create the GUI
         self.app = create_gui()
-        
+
         # Initialize the worker thread pool
         self.thread_pool = QThreadPool()
         print(f"Multithreading with maximum {self.thread_pool.maxThreadCount()} threads")
-        
+
         # List to store workers
         self.workers = []
-        
-        # Initialize the application
-        self.initialize()
+
+        # Note: Initialization is handled by ConversationManager.initialize()
+        # which is called in create_gui()
 
 def create_gui():
     """Create the GUI application"""
